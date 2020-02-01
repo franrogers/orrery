@@ -10,6 +10,7 @@ WriteMakefile(
     EXE_FILES       => ['bin/orrery'],
     PREREQ_PM       => {
         'Astro::Coords' => '0',
+        'Astro::MoonPhase' => '0',
         'Astro::Telescope' => '0',
         'Curses' => '0',
     },

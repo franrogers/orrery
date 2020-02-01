@@ -6,6 +6,7 @@ use warnings;
 use Astro::Coords;
 use Astro::Coords::Angle;
 use Astro::Coords::Planet;
+use Astro::MoonPhase;
 use Astro::Telescope;
 use Curses;
 use I18N::Langinfo qw(langinfo CODESET);
@@ -249,7 +250,20 @@ sub draw_labels {
     $win->hline($maxy - 1, 15, ACS_DEGREE, 1);
 
     my $lower_right = strftime '%F %R', localtime;
-    $win->addstring($maxy - 1, $maxx - length($lower_right), $lower_right);
+    $win->addstring($maxy - 2, $maxx - length($lower_right), $lower_right);
+
+    my $phase = phase;
+    my $phase_name = $phase < 0.02 ? 'new' :
+                     $phase < 0.24 ? 'waxing crescent' :
+                     $phase < 0.26 ? 'first quarter' :
+                     $phase < 0.49 ? 'waxing gibbous' :
+                     $phase < 0.51 ? 'full' :
+                     $phase < 0.74 ? 'waning gibbous' :
+                     $phase < 0.76 ? 'last quarter' :
+                     $phase < 0.99 ? 'waxing crescent' :
+                                     'new';
+    my $lower_right2 = sprintf '%s moon (%3d%%)', $phase_name, $phase * 200;
+    $win->addstring($maxy - 1, $maxx - length($lower_right2), $lower_right2);
 }
     
 
