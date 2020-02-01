@@ -52,7 +52,7 @@ sub new {
                               Long => $long,
                               Alt  => $args{alt} || 0);
 
-    $self->{view_az} = $args{azimuth} || pi;
+    $self->{view_az} = $args{azimuth} || $lat > 0 ? pi : 0;
     $self->{view_el} = $args{elevation} || 0;
     $self->{view_width} = 0.95;
     $self->{view_height} = 1;
@@ -174,11 +174,16 @@ sub draw_axes {
     my $y_line = $self->el_to_y(0);
     $win->hline($y_line, 0, ACS_HLINE, $maxx);
 
+    $win->addstring($y_line, $self->az_to_x(   -pi / 2), 'W');
     $win->addstring($y_line, $self->az_to_x(    pi / 2), 'E');
     $win->addstring($y_line, $self->az_to_x(3 * pi / 2), 'W');
+    $win->addstring($y_line, $self->az_to_x(5 * pi / 2), 'E');
 
     foreach my $x_label (map { $self->az_to_x($_) }
-                             (pi / 4, 3 * pi / 4, 5 * pi / 4, 7 * pi / 4)) {
+                             (-3 * pi / 4,     -pi / 4,
+                                   pi / 4,  3 * pi / 4,
+                               5 * pi / 4,  7 * pi / 4,
+                               9 * pi / 4, 11 * pi / 4)) {
         $win->hline($y_line, $x_label, ACS_PLUS, 1);
     }
 
@@ -211,6 +216,7 @@ sub draw_planet {
 
     my ($az, $el) = $planet->azel;
     my ($y, $x) = $self->azel_to_yx($az->radians, $el->radians);
+    $x %= $maxx;
     
     $win->addstring($y, $x, $unicode ? $symbols{$planet_name}
                                      : $abbrevs{$planet_name});
@@ -252,7 +258,7 @@ sub mainloop {
 
     while (1) {
         $self->draw;
-        sleep(30 - time % 30);
+        sleep(60 - time % 60);
     }
 }
 
