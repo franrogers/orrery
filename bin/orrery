@@ -4,6 +4,7 @@ use strict;
 use warnings;
 
 use Astro::Coords::Angle;
+use Astro::Telescope;
 use Encode qw(decode);
 use Getopt::Std;
 use I18N::Langinfo qw(langinfo CODESET);
@@ -48,9 +49,12 @@ sub main {
         exit 1;
     }
 
-    my $orrery = Orrery->new(lat => $lat,
-                             long => $long,
-                             alt => $alt);
+    my $tel = Astro::Telescope->new(Name => 'Orrery',
+                                    Long => $long,
+                                    Lat  => $lat,
+                                    Alt  => $alt);
+
+    my $orrery = Orrery->new(telescope => $tel);
     $orrery->mainloop();
 }
 

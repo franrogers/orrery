@@ -4,11 +4,11 @@ use strict;
 use warnings;
 
 use Astro::Coords;
-use Astro::Coords::Angle;
 use Astro::Coords::Planet;
 use Astro::MoonPhase;
 use Astro::Telescope;
 use Curses;
+use DateTime;
 use I18N::Langinfo qw(langinfo CODESET);
 use Math::Trig qw(pi deg2rad rad2deg);
 use POSIX qw(round strftime);
@@ -40,51 +40,32 @@ sub new {
     my ($class, %args) = @_;
     my $self = {};
 
-    my $lat = $args{lat};
-    my $long = $args{long};
-    $lat = Astro::Coords::Angle->new($lat, units => 'degrees')
-        if !$lat->isa('Astro::Coords::Angle');
-    $long = Astro::Coords::Angle->new($long, units => 'degrees')
-        if !$long->isa('Astro::Coords::Angle');
+    $self->{telescope} = $args{telescope};
+    $self->{datetime} = $args{datetime};
 
-    $self->{telescope} =
-        Astro::Telescope->new(Name => 'Orrery',
-                              Lat  => $lat,
-                              Long => $long,
-                              Alt  => $args{alt} || 0);
+    $self->{range} = $args{range};
+    if (!defined $self->{range}) {
+        $self->{range} = $self->{telescope}->lat > 0
+                       ? [  0, 2*pi, -pi/2, pi/2]
+                       : [-pi,   pi, -pi/2, pi/2]
+    }
 
-    $self->{view_az} = $args{azimuth} || $lat > 0 ? pi : 0;
-    $self->{view_el} = $args{elevation} || 0;
-    $self->{view_width} = 0.95;
-    $self->{view_height} = 1;
-
-    my (%planets, @planet_order);
+    my @planets;
     foreach my $planet_name (@Astro::Coords::Planet::PLANETS) {
         my $planet = Astro::Coords->new(planet => $planet_name);
         $planet->telescope($self->{telescope});
+        $planet->datetime($self->{datetime});
 
-        $planets{$planet_name} = $planet;
-        push @planet_order, $planet_name;
+        push @planets, $planet;
     }
-    $self->{planets} = \%planets;
-    $self->{planet_order} = \@planet_order;
+    $self->{planets} = \@planets;
 
     $self->{win} = Curses->new;
+    $self->{win}->keypad(1);
     curs_set 0;
-
-    my $get_size = sub {
-        my ($maxy, $maxx);
-        $self->{win}->getmaxyx($maxy, $maxx);
-        $self->{maxyx} = [$maxy, $maxx];
-    };
-    &{$get_size}();
-    my $winch = sub {
-        endwin;
-        refresh;
-        &{$get_size}();
-        draw($self);
-    };
-    $SIG{WINCH} = $winch;
+    noecho;
+    $self->{win}->getmaxyx(my $maxy, my $maxx);
+    $self->{maxyx} = [$maxy, $maxx];
 
     return bless $self, $class;
 }
@@ -95,55 +76,64 @@ sub DESTROY {
     endwin;
 }
 
-sub azel_to_yx {
+sub _resize {
+    my $self = shift;
+
+    endwin;
+    refresh;
+    my ($maxy, $maxx);
+    $self->{win}->getmaxyx($maxy, $maxx);
+    $self->{maxyx} = [$maxy, $maxx];
+}
+
+sub datetime {
+    my $self = shift;
+    if (@_) {
+        $self->{datetime} = shift;
+
+        for my $planet (@{$self->{planets}}) {
+            $planet->datetime($self->{datetime});
+        }
+    }
+    return $self->{datetime};
+}
+
+sub _azel_to_yx {
     my $self = shift;
     my $az = shift;
     my $el = shift;
 
     my ($maxy, $maxx) = @{$self->{maxyx}};
-    my $view_az = $self->{view_az};
-    my $view_el = $self->{view_el};
-    my $view_width = $self->{view_width};
-    my $view_height = $self->{view_height};
 
-    if ($view_width == 1 && $view_az - $az == pi) {
-        return -$maxx;
-    }
+    my ($min_az, $max_az, $min_el, $max_el) = @{$self->{range}};
+    $az = -2*pi + $az if $az > $max_az;
 
-    my $y = round($maxy / 2 - (1 / $view_height) * (($el / (pi / 2)) - ($view_el / (pi / 2))) * ($maxy / 2));
-    my $x = round($maxx / 2 + (1 / $view_width) * (($az / (pi * 2)) - ($view_az / (pi * 2))) * $maxx);
-    #my $y = round($maxy / 2 - ($el / (pi / 2)) * ($maxy / 2));
-    #my $x = round(($az / (pi * 2)) * $maxx);
+    # TODO: make this less hairy
+    my $view_az = $min_az + ($max_az - $min_az) / 2;
+    my $view_el = $min_el + ($max_el - $min_el) / 2;
+    my $view_width = ($max_az - $min_az) / (2*pi);
+    my $view_height = ($max_el - $min_el) / pi;
+
+    my $y = round($maxy / 2 - (1 / $view_height) * (($el / (pi/2)) - ($view_el / (pi/2))) * ($maxy / 2));
+    my $x = round($maxx / 2 + (1 / $view_width ) * (($az / (pi*2)) - ($view_az / (pi*2))) * $maxx);
 
     return ($y, $x);
 }
 
-sub az_to_x {
+sub _az_to_x {
     my $self = shift;
     my $az = shift;
 
-    my ($maxy, $maxx) = @{$self->{maxyx}};
-    my $view_az = $self->{view_az};
-    my $view_width = $self->{view_width};
-
-    if ($view_width == 1 && $view_az - $az == pi) {
-        return -$maxx;
-    }
-   
-    my $x = round($maxx / 2 + (1 / $view_width) * (($az / (pi * 2)) - ($view_az / (pi * 2))) * $maxx);
+    my ($y, $x) = $self->_azel_to_yx($az, 0);
 
     return $x;
 }
 
-sub el_to_y {
+sub _el_to_y {
     my $self = shift;
     my $el = shift;
     
-    my ($maxy, $maxx) = @{$self->{maxyx}};
-    my $view_el = $self->{view_el};
-    my $view_height = $self->{view_height};
-  
-    my $y = round($maxy / 2 - (1 / $view_height) * (($el / (pi / 2)) - ($view_el / (pi / 2))) * ($maxy / 2));
+    my ($y, $x) = $self->_azel_to_yx(0, $el);
 
     return $y;
 }
@@ -154,105 +144,109 @@ sub draw {
     my $win = $self->{win};
     $win->clear;
 
-    $self->draw_axes;
+    $self->_draw_axes;
 
-    foreach my $planet_name (reverse @{$self->{planet_order}}) {
-        $self->draw_planet($self->{planets}->{$planet_name});
+    foreach my $planet (reverse @{$self->{planets}}) {
+        $self->_draw_planet($planet);
     }
 
-    $self->draw_labels;
+    $self->_draw_status;
 
     $win->refresh;
 }
 
-sub draw_axes {
+sub _draw_axes {
     my $self = shift;
 
     my $win = $self->{win};
-
     my ($maxy, $maxx) = @{$self->{maxyx}};
 
-    my $y_line = $self->el_to_y(0);
+    my $y_line = $self->_el_to_y(0);
     $win->hline($y_line, 0, ACS_HLINE, $maxx);
 
-    $win->addstring($y_line, $self->az_to_x(   -pi / 2), 'W');
-    $win->addstring($y_line, $self->az_to_x(    pi / 2), 'E');
-    $win->addstring($y_line, $self->az_to_x(3 * pi / 2), 'W');
-    $win->addstring($y_line, $self->az_to_x(5 * pi / 2), 'E');
+    foreach my $az (45, 90, 135, 180, 225, 270, 315) {
+        my $x_label = $self->_az_to_x(deg2rad($az));
 
-    foreach my $x_label (map { $self->az_to_x($_) }
-                             (-3 * pi / 4,     -pi / 4,
-                                   pi / 4,  3 * pi / 4,
-                               5 * pi / 4,  7 * pi / 4,
-                               9 * pi / 4, 11 * pi / 4)) {
-        $win->hline($y_line, $x_label, ACS_PLUS, 1);
+        if ($az == 90) {
+            $win->addstring($y_line, $x_label, 'E');
+        }
+        elsif ($az == 270) {
+            $win->addstring($y_line, $x_label, 'W');
+        }
+        else {
+            $win->addch($y_line, $x_label, ACS_PLUS);
+        }
     }
 
-    foreach my $x_line (map { $self->az_to_x($_) } (0, pi)) {
+    foreach my $x_line (map { $self->_az_to_x($_) } (0, pi)) {
+        next if $x_line == $self->{range}->[0]
+             || $x_line == $self->{range}->[1];
+
         $win->vline(0, $x_line, ACS_VLINE, $maxy);
-        $win->hline($y_line, $x_line, ACS_PLUS, 1);
+        $win->addch($y_line, $x_line, ACS_PLUS);
 
-        foreach my $y_label (map { $self->el_to_y($_) }
-                                 (-pi, pi)) {
-            $win->hline($y_label, $x_line, ACS_PLUS, 1);
-        }
-
-        foreach my $y (-60, -30, 30, 60) {
-            my $y_label = $self->el_to_y(deg2rad($y));
-            $win->addstring($y_label, $x_line - 2, sprintf "% 2d", $y);
-            $win->hline($y_label, $x_line + 1, ACS_DEGREE, 1);
+        foreach my $el (-60, -30, 0, 30, 60) {
+            my $y_label = $self->_el_to_y(deg2rad($el));
+            if (!$el) {
+                $win->addch($y_label, $x_line, ACS_PLUS);
+            } else {
+                $win->addstring($y_label, $x_line - 2, sprintf('% 2d', $el));
+                $win->addch($y_label, $x_line + 1, ACS_DEGREE);
+            }
         }
     }
 }
 
-sub draw_planet {
+sub _draw_planet {
     my $self = shift;
     my $planet = shift;
 
     my $win = $self->{win};
     my ($maxy, $maxx) = @{$self->{maxyx}};
 
-    my %by_value = reverse %{$self->{planets}};
-    my $planet_name = $by_value{$planet};
-
     my ($az, $el) = $planet->azel;
-    my ($y, $x) = $self->azel_to_yx($az->radians, $el->radians);
+    my ($y, $x) = $self->_azel_to_yx($az->radians, $el->radians);
     $x %= $maxx;
     
-    $win->addstring($y, $x, $unicode ? $symbols{$planet_name}
-                                     : $abbrevs{$planet_name});
+    $win->addstring($y, $x, $unicode ? $symbols{$planet->name}
+                                     : $abbrevs{$planet->name});
 }
 
-sub draw_labels {
+sub _draw_status {
     my $self = shift;
 
     my $win = $self->{win};
     my ($maxy, $maxx) = @{$self->{maxyx}};
 
-    my ($lat_g, $lat_d, $lat_m, $lat_s) =
+    my ($lat_sign,   $lat_d,  $lat_m,  $lat_s) =
         $self->{telescope}->lat->components;
-    my ($long_g, $long_d, $long_m, $long_s) =
+    my ($long_sign, $long_d, $long_m, $long_s) =
         $self->{telescope}->long->components;
     my $alt = $self->{telescope}->alt;
 
-    my $lower_left = sprintf("%3d %02d'%02d\"%s % 3d %02d'%02d\"%s  %4dm",
-                             $lat_d,
-                             $lat_m,
-                             $lat_s,
-                             $lat_g eq '+' ? 'N' : 'S',
-                             $long_d,
-                             $long_m,
-                             $long_s,
-                             $long_g eq '+' ? 'E' : 'W',
+    my $lower_left = sprintf("%3d %02d'%02d\"%s %3d %02d'%02d\"%s  %4dm",
+                             $lat_d,   $lat_m,  $lat_s,
+                             $lat_sign  eq '+' ? 'N' : 'S',
+                             $long_d, $long_m, $long_s,
+                             $long_sign eq '+' ? 'E' : 'W',
                              $alt);
     $win->addstring($maxy - 1, 0, $lower_left);
-    $win->hline($maxy - 1, 3, ACS_DEGREE, 1);
-    $win->hline($maxy - 1, 15, ACS_DEGREE, 1);
+    $win->addch($maxy - 1, 3, ACS_DEGREE);
+    $win->addch($maxy - 1, 15, ACS_DEGREE);
 
-    my $lower_right = strftime '%F %R', localtime;
+    my $dt = $self->datetime;
+    my $fixed_time = defined $dt;
+    $dt = defined $dt
+        ? $dt->clone->set_time_zone('local')
+        : DateTime->now(time_zone => 'local');
+
+    my $lower_right = sprintf('%s',
+                              $dt->strftime('%F %R'));
     $win->addstring($maxy - 2, $maxx - length($lower_right), $lower_right);
+    $win->addch($maxy - 2, $maxx - length($lower_right) - 1, ACS_BULLET)
+        if $fixed_time;
 
-    my $phase = phase;
+    my ($phase, $illum) = (phase($dt->epoch))[0..1];
     my $phase_name = $phase < 0.02 ? 'new' :
                      $phase < 0.24 ? 'waxing crescent' :
                      $phase < 0.26 ? 'first quarter' :
@@ -260,19 +254,110 @@ sub draw_labels {
                      $phase < 0.51 ? 'full' :
                      $phase < 0.74 ? 'waning gibbous' :
                      $phase < 0.76 ? 'last quarter' :
-                     $phase < 0.99 ? 'waxing crescent' :
+                     $phase < 0.99 ? 'waning crescent' :
                                      'new';
-    my $lower_right2 = sprintf '%s moon (%3d%%)', $phase_name, $phase * 200;
+    my $lower_right2 = sprintf '%s %3d%%', $phase_name, int($illum * 100);
     $win->addstring($maxy - 1, $maxx - length($lower_right2), $lower_right2);
+
+    if ($unicode) {
+        $win->addstring($maxy - 2, $maxx - 22, "\x{2609}");
+        $win->addstring($maxy - 1, $maxx - 22, "\x{263D}");
+    }
 }
     
+sub _show_help {
+    my $self = shift;
+  
+    my $win = $self->{win};
+    my ($maxy, $maxx) = @{$self->{maxyx}};
+
+    my ($helpwin_maxy, $helpwin_maxx) = (15, 68);
+    my $helpwin = $win->derwin($helpwin_maxy,
+                               $helpwin_maxx,
+                               $maxy / 2 - $helpwin_maxy / 2,
+                               $maxx / 2 - $helpwin_maxx / 2);
+    $helpwin->clear;
+    $helpwin->box(ACS_VLINE, ACS_HLINE);
+    $helpwin->addch(0, $helpwin_maxx / 2, ACS_TTEE);
+    $helpwin->addch($helpwin_maxy - 1, $helpwin_maxx / 2, ACS_BTEE);
+    $helpwin->vline(1, $helpwin_maxx / 2, ACS_VLINE, $helpwin_maxy - 2);
+
+    my $x = 2;
+    my $y = 1;
+    $helpwin->addstring($y++, $x, 'planets:');
+    for my $planet (@{$self->{planets}}) {
+        my $planet_name = $planet->name;
+        $helpwin->addstring($y, $x+1, $unicode ? $symbols{$planet_name}
+                                            : $abbrevs{$planet_name});
+        $helpwin->addstring($y, $x+3, $planet_name);
+        $y++;
+    }
+
+    $y = 1;
+    $x = $helpwin_maxx / 2 + 2;
+    $helpwin->addstring($y++, $x, 'key bindings:');
+    $helpwin->addstring($y++, $x+1, 'h/l  go back/forward in time');
+    $helpwin->addstring($y++, $x+1, 'n    go to the present time');
+    $helpwin->addstring($y++, $x+1, '?    help');
+    $helpwin->addstring($y++, $x+1, 'q    quit');
+
+    $helpwin->getchar;
+}
 
 sub mainloop {
     my $self = shift;
 
+    local $SIG{WINCH} = sub { $self->_resize };
+    local $SIG{ALRM} = sub { 0 };
+
     while (1) {
         $self->draw;
-        sleep(60 - time % 60);
+
+        alarm (60 - time % 60);
+        my ($ch, $key) = $self->{win}->getchar;
+
+        if ($ch eq 'h') {
+            my $dt = $self->datetime;
+            if (!defined $dt) {
+                $dt = DateTime->now();
+            }
+
+            if ($dt->minute || $dt->second || $dt->nanosecond) {
+                $dt->set_minute(0);
+                $dt->set_second(0);
+                $dt->set_nanosecond(0);
+            }
+            else {
+                $dt->subtract(hours => 1);
+            }
+
+            $self->datetime($dt);
+        }
+        if ($ch eq 'l') {
+            my $dt = $self->datetime;
+            if (!defined $dt) {
+                $dt = DateTime->now();
+            }
+
+            if ($dt->minute || $dt->second || $dt->nanosecond) {
+                $dt->set_minute(0);
+                $dt->set_second(0);
+                $dt->set_nanosecond(0);
+            }
+            $dt->add(hours => 1);
+
+            $self->datetime($dt);
+        }
+        elsif ($ch eq 'n') {
+            $self->datetime(undef);
+        }
+        elsif ($ch eq '?') {
+            alarm 0;
+            $self->_show_help;
+        }
+        elsif ($ch eq 'q') {
+            return;
+        }
     }
 }
 
