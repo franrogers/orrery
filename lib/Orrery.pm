@@ -240,12 +240,6 @@ sub _draw_status {
         ? $dt->clone->set_time_zone('local')
         : DateTime->now(time_zone => 'local');
 
-    my $lower_right = sprintf('%s',
-                              $dt->strftime('%F %R'));
-    $win->addstring($maxy - 2, $maxx - length($lower_right), $lower_right);
-    $win->addch($maxy - 2, $maxx - length($lower_right) - 1, ACS_BULLET)
-        if $fixed_time;
-
     my ($phase, $illum) = (phase($dt->epoch))[0..1];
     my $phase_name = $phase < 0.02 ? 'new' :
                      $phase < 0.24 ? 'waxing crescent' :
@@ -256,12 +250,20 @@ sub _draw_status {
                      $phase < 0.76 ? 'last quarter' :
                      $phase < 0.99 ? 'waning crescent' :
                                      'new';
-    my $lower_right2 = sprintf '%s %3d%%', $phase_name, int($illum * 100);
-    $win->addstring($maxy - 1, $maxx - length($lower_right2), $lower_right2);
+    my $lower_right2 = sprintf($illum < 1 ? '%s %2d%%': '%s --%',
+                               $phase_name,
+                               int($illum * 100));
+    $win->addstring($maxy - 2, $maxx - length($lower_right2), $lower_right2);
+
+    my $lower_right = sprintf('%s',
+                              $dt->strftime('%a %F %R'));
+    $win->addstring($maxy - 1, $maxx - length($lower_right), $lower_right);
+    $win->addch($maxy - 1, $maxx - 23, ACS_BULLET)
+        if $fixed_time;
 
     if ($unicode) {
-        $win->addstring($maxy - 2, $maxx - 22, "\x{2609}");
-        $win->addstring($maxy - 1, $maxx - 22, "\x{263D}");
+        $win->addstring($maxy - 2, $maxx - 22, "\x{263D}");
+        $win->addstring($maxy - 1, $maxx - 22, "\x{2609}");
     }
 }
     
