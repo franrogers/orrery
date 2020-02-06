@@ -15,15 +15,15 @@ use POSIX qw(round);
 our $VERSION = '1.00';
 
 
-our @PLANETS = (['sun',     3, 'S', "\x{2609}"],
-                ['mercury', 2, 'M', "\x{263f}"],
-                ['venus',   1, 'v', "\x{2640}"],
-                ['moon',    0, 'L', "\x{263D}"],
-                ['mars',    4, 'm', "\x{2642}"],
-                ['jupiter', 5, 'j', "\x{2643}"],
-                ['saturn',  6, 's', "\x{2644}"],
-                ['uranus',  7, 'u', "\x{2645}"],
-                ['neptune', 8, 'n', "\x{2646}"]);
+my @PLANETS = (['sun',     3, 'S', "\x{2609}"],
+               ['mercury', 2, 'M', "\x{263f}"],
+               ['venus',   1, 'v', "\x{2640}"],
+               ['moon',    0, 'L', "\x{263D}"],
+               ['mars',    4, 'm', "\x{2642}"],
+               ['jupiter', 5, 'j', "\x{2643}"],
+               ['saturn',  6, 's', "\x{2644}"],
+               ['uranus',  7, 'u', "\x{2645}"],
+               ['neptune', 8, 'n', "\x{2646}"]);
 
 sub new {
     my ($class, %args) = @_;
