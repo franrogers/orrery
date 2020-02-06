@@ -6,6 +6,7 @@ use warnings;
 use Astro::Coords::Angle;
 use Astro::Telescope;
 use Encode qw(decode);
+use File::Basename;
 use Getopt::Std;
 use I18N::Langinfo qw(langinfo CODESET);
 use Orrery;
@@ -13,11 +14,11 @@ use Scalar::Util qw(looks_like_number);
 
 
 sub main::HELP_MESSAGE {
-    print "usage: $0 LATITUDE LONGITUDE [ALTITUDE]\n";
+    print 'usage: ', basename($0), " LATITUDE LONGITUDE [ALTITUDE]\n";
 }
 
 sub main::VERSION_MESSAGE {
-    print "$0 ", $Orrery::VERSION, "\n";
+    print basename($0), ' ', $Orrery::VERSION, "\n";
 }
 
 sub main {

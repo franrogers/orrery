@@ -279,7 +279,6 @@ sub _draw_selection {
     my $planet = $self->{planets}->[$self->{index}];
 
     my ($az, $el) = $planet->azel;
-    my $diam = $planet->diam;
 
     $win->attron(A_REVERSE);
     $self->_draw_planet($planet);
@@ -293,10 +292,6 @@ sub _draw_selection {
     $win->addstring(3, 0, 'elevation:');
     $win->addstring(3, 13, sprintf('% 3d', $el->degrees));
     $win->addch(3, 16, ACS_DEGREE);
-    $win->addstring(4, 1, 'diameter:');
-    $win->addstring(4, 11, sprintf(q{%02d'%02d"},
-                                   $diam->arcmin,
-                                   $diam->arcsec % 60));
 
     my $event_time = sub {
         my $dt = shift->clone->set_time_zone($self->{time_zone});
@@ -324,12 +319,12 @@ sub _draw_selection {
     my $rise = $transit > $next_rise ? $next_rise : $prev_rise;
     my $set  = $transit < $prev_set  ? $prev_set  : $next_set;
     
-    $win->addstring(6,  5, 'rise:');
-    $win->addstring(6, 11, &{$event_time}($rise));
-    $win->addstring(7,  2, 'transit:');
-    $win->addstring(7, 11, &{$event_time}($transit));
-    $win->addstring(8,  6, 'set:');
-    $win->addstring(8, 11, &{$event_time}($set));
+    $win->addstring(5,  5, 'rise:');
+    $win->addstring(5, 11, &{$event_time}($rise));
+    $win->addstring(6,  2, 'transit:');
+    $win->addstring(6, 11, &{$event_time}($transit));
+    $win->addstring(7,  6, 'set:');
+    $win->addstring(7, 11, &{$event_time}($set));
 }
 
 sub _draw_status {
