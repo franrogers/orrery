@@ -3,38 +3,27 @@ package Orrery;
 use strict;
 use warnings;
 
-use Astro::Coords;
 use Astro::Coords::Planet;
 use Astro::MoonPhase;
 use Astro::Telescope;
 use Curses;
 use DateTime;
 use I18N::Langinfo qw(langinfo CODESET);
-use Math::Trig qw(pi deg2rad rad2deg);
-use POSIX qw(round strftime);
+use Math::Trig qw(pi deg2rad);
+use POSIX qw(round);
 
 our $VERSION = '1.00';
 
 
-my %abbrevs = (moon    => 'L',
-               sun     => 'S',
-               mercury => 'M',
-               venus   => 'v',
-               mars    => 'm',
-               jupiter => 'j',
-               saturn  => 's',
-               uranus  => 'u',
-               neptune => 'n');
-my %symbols = (moon    => "\x{263D}",
-               sun     => "\x{2609}",
-               mercury => "\x{263f}",
-               venus   => "\x{2640}",
-               mars    => "\x{2642}",
-               jupiter => "\x{2643}",
-               saturn  => "\x{2644}",
-               uranus  => "\x{2645}",
-               neptune => "\x{2646}");
-my $unicode = langinfo(CODESET) =~ /^utf|^ucs/i;
+our @PLANETS = (['sun',     3, 'S', "\x{2609}"],
+                ['mercury', 2, 'M', "\x{263f}"],
+                ['venus',   1, 'v', "\x{2640}"],
+                ['moon',    0, 'L', "\x{263D}"],
+                ['mars',    4, 'm', "\x{2642}"],
+                ['jupiter', 5, 'j', "\x{2643}"],
+                ['saturn',  6, 's', "\x{2644}"],
+                ['uranus',  7, 'u', "\x{2645}"],
+                ['neptune', 8, 'n', "\x{2646}"]);
 
 sub new {
     my ($class, %args) = @_;
@@ -50,15 +39,31 @@ sub new {
                        : [-pi,   pi, -pi/2, pi/2]
     }
 
-    my @planets;
-    foreach my $planet_name (@Astro::Coords::Planet::PLANETS) {
-        my $planet = Astro::Coords->new(planet => $planet_name);
+    my (@planets, @draw_order, %symbols);
+    foreach my $entry (@PLANETS) {
+        my ($planet_name, $z_order, $abbrev, $symbol) = @$entry;
+
+        my $planet = Astro::Coords::Planet->new($planet_name);
         $planet->telescope($self->{telescope});
         $planet->datetime($self->{datetime});
-
         push @planets, $planet;
+
+        $draw_order[$z_order] = $planet;
+
+        $symbols{$planet_name} = langinfo(CODESET) =~ /^utf|^ucs/i
+                               ? $symbol
+                               : $abbrev;
     }
     $self->{planets} = \@planets;
+    $self->{draw_order} = \@draw_order;
+    $self->{symbols} = \%symbols;
+
+    $self->{index} = undef;
+
+    $self->{time_zone} = $args{time_zone} || 'local';
+    if ($self->{time_zone} eq 'local') {
+        $self->{time_zone} = DateTime::TimeZone->new(name => 'local');
+    }
 
     $self->{win} = Curses->new;
     $self->{win}->keypad(1);
@@ -71,8 +76,6 @@ sub new {
 }
 
 sub DESTROY {
-    my $self = shift;
-
     endwin;
 }
 
@@ -95,7 +98,63 @@ sub datetime {
             $planet->datetime($self->{datetime});
         }
     }
-    return $self->{datetime};
+    return $self->{datetime} || DateTime->now;
+}
+
+sub datetime_local {
+    my $self = shift;
+    my $dt = $self->datetime->clone;
+    return $dt->set_time_zone($self->{time_zone});
+}
+
+sub usenow {
+    my $self = shift;
+    if (@_) {
+        if (shift) {
+            $self->datetime(undef);
+        } elsif (!defined $self->{datetime}) {
+            $self->datetime(DateTime->now);
+        }
+    }
+    return !defined $self->{datetime};
+}
+
+sub planets {
+    return @{shift->{planets}};
+}
+
+sub selected {
+    my $self = shift;
+    if (@_) {
+        my $planet = shift;
+        foreach my $n (0 .. scalar @{$self->{planets}}) {
+            if ($planet == $self->{planets}->[$n]) {
+                $self->{index} = $n;
+                last;
+            }
+        }
+    }
+    return defined $self->{index} ? $self->{planets}->[$self->{index}] : undef;
+}
+
+sub selected_index {
+    my $self = shift;
+    if (@_) {
+        my $index = shift;
+        $self->{index} = defined $index
+                       ? $index % scalar @{$self->{planets}}
+                       : undef;
+    }
+    return $self->{index};
+}
+
+sub range {
+    my $self = shift;
+    if (@_) {
+        my ($min_az, $max_az, $min_el, $max_el) = @_;
+        $self->{range} = [$min_az, $max_az, $min_el, $max_el];
+    }
+    return $self->{range};
 }
 
 sub _azel_to_yx {
@@ -106,16 +165,11 @@ sub _azel_to_yx {
     my ($maxy, $maxx) = @{$self->{maxyx}};
 
     my ($min_az, $max_az, $min_el, $max_el) = @{$self->{range}};
+
     $az = -2*pi + $az if $az > $max_az;
-
-    # TODO: make this less hairy
-    my $view_az = $min_az + ($max_az - $min_az) / 2;
-    my $view_el = $min_el + ($max_el - $min_el) / 2;
-    my $view_width = ($max_az - $min_az) / (2*pi);
-    my $view_height = ($max_el - $min_el) / pi;
-
-    my $y = round($maxy / 2 - (1 / $view_height) * (($el / (pi/2)) - ($view_el / (pi/2))) * ($maxy / 2));
-    my $x = round($maxx / 2 + (1 / $view_width ) * (($az / (pi*2)) - ($view_az / (pi*2))) * $maxx);
+   
+    my $y = round($maxy - $maxy * ($el - $min_el) / ($max_el - $min_el));
+    my $x = round(        $maxx * ($az - $min_az) / ($max_az - $min_az));
 
     return ($y, $x);
 }
@@ -146,9 +200,11 @@ sub draw {
 
     $self->_draw_axes;
 
-    foreach my $planet (reverse @{$self->{planets}}) {
+    foreach my $planet (reverse @{$self->{draw_order}}) {
         $self->_draw_planet($planet);
     }
+
+    $self->_draw_selection;
 
     $self->_draw_status;
 
@@ -178,9 +234,11 @@ sub _draw_axes {
         }
     }
 
-    foreach my $x_line (map { $self->_az_to_x($_) } (0, pi)) {
-        next if $x_line == $self->{range}->[0]
-             || $x_line == $self->{range}->[1];
+    foreach my $az (0, pi) {
+        my $x_line = $self->_az_to_x($az);
+
+        next if $az == $self->{range}->[0]
+             || $az == $self->{range}->[1];
 
         $win->vline(0, $x_line, ACS_VLINE, $maxy);
         $win->addch($y_line, $x_line, ACS_PLUS);
@@ -206,10 +264,72 @@ sub _draw_planet {
 
     my ($az, $el) = $planet->azel;
     my ($y, $x) = $self->_azel_to_yx($az->radians, $el->radians);
-    $x %= $maxx;
     
-    $win->addstring($y, $x, $unicode ? $symbols{$planet->name}
-                                     : $abbrevs{$planet->name});
+    $win->addstring($y, $x, $self->{symbols}->{$planet->name});
+}
+
+sub _draw_selection {
+    my $self = shift;
+
+    return if !defined $self->{index};
+
+    my $win = $self->{win};
+    my ($maxy, $maxx) = @{$self->{maxyx}};
+
+    my $planet = $self->{planets}->[$self->{index}];
+
+    my ($az, $el) = $planet->azel;
+    my $diam = $planet->diam;
+
+    $win->attron(A_REVERSE);
+    $self->_draw_planet($planet);
+    $win->attroff(A_REVERSE);
+
+    $win->addstring(0, 0, $planet->name);
+
+    $win->addstring(2, 2, 'azimuth:');
+    $win->addstring(2, 13, sprintf('% 3d', $az->degrees));
+    $win->addch(2, 16, ACS_DEGREE);
+    $win->addstring(3, 0, 'elevation:');
+    $win->addstring(3, 13, sprintf('% 3d', $el->degrees));
+    $win->addch(3, 16, ACS_DEGREE);
+    $win->addstring(4, 1, 'diameter:');
+    $win->addstring(4, 11, sprintf(q{%02d'%02d"},
+                                   $diam->arcmin,
+                                   $diam->arcsec % 60));
+
+    my $event_time = sub {
+        my $dt = shift->clone->set_time_zone($self->{time_zone});
+        
+        my $today = $self->datetime_local->truncate(to => 'day');
+
+        if (!defined $dt) {
+            return 'never';
+        }
+        elsif ($dt->clone->truncate(to => 'day') == $today) {
+            return $dt->strftime('%R');
+        }
+        else {
+            return $dt->strftime('%R %d %b');
+        }
+    };
+
+    my $transit = $planet->meridian_time(nearest => 1);
+
+    my $prev_rise = $planet->rise_time(event => -1);
+    my $next_rise = $planet->rise_time(event =>  1);
+    my $prev_set  = $planet->set_time (event => -1);
+    my $next_set  = $planet->set_time (event =>  1);
+
+    my $rise = $transit > $next_rise ? $next_rise : $prev_rise;
+    my $set  = $transit < $prev_set  ? $prev_set  : $next_set;
+    
+    $win->addstring(6,  5, 'rise:');
+    $win->addstring(6, 11, &{$event_time}($rise));
+    $win->addstring(7,  2, 'transit:');
+    $win->addstring(7, 11, &{$event_time}($transit));
+    $win->addstring(8,  6, 'set:');
+    $win->addstring(8, 11, &{$event_time}($set));
 }
 
 sub _draw_status {
@@ -224,7 +344,7 @@ sub _draw_status {
         $self->{telescope}->long->components;
     my $alt = $self->{telescope}->alt;
 
-    my $lower_left = sprintf("%3d %02d'%02d\"%s %3d %02d'%02d\"%s  %4dm",
+    my $lower_left = sprintf(q{%3d %02d'%02d"%s %3d %02d'%02d"%s %4dm},
                              $lat_d,   $lat_m,  $lat_s,
                              $lat_sign  eq '+' ? 'N' : 'S',
                              $long_d, $long_m, $long_s,
@@ -234,11 +354,7 @@ sub _draw_status {
     $win->addch($maxy - 1, 3, ACS_DEGREE);
     $win->addch($maxy - 1, 15, ACS_DEGREE);
 
-    my $dt = $self->datetime;
-    my $fixed_time = defined $dt;
-    $dt = defined $dt
-        ? $dt->clone->set_time_zone('local')
-        : DateTime->now(time_zone => 'local');
+    my $dt = $self->datetime_local;
 
     my ($phase, $illum) = (phase($dt->epoch))[0..1];
     my $phase_name = $phase < 0.02 ? 'new' :
@@ -255,13 +371,12 @@ sub _draw_status {
                                int($illum * 100));
     $win->addstring($maxy - 2, $maxx - length($lower_right2), $lower_right2);
 
-    my $lower_right = sprintf('%s',
-                              $dt->strftime('%a %F %R'));
+    my $lower_right = sprintf('%s', $dt->strftime('%a %F %R'));
     $win->addstring($maxy - 1, $maxx - length($lower_right), $lower_right);
     $win->addch($maxy - 1, $maxx - 23, ACS_BULLET)
-        if $fixed_time;
+        if !$self->usenow;
 
-    if ($unicode) {
+    if (langinfo(CODESET) =~ /^utf|^ucs/i) {
         $win->addstring($maxy - 2, $maxx - 22, "\x{263D}");
         $win->addstring($maxy - 1, $maxx - 22, "\x{2609}");
     }
@@ -273,35 +388,43 @@ sub _show_help {
     my $win = $self->{win};
     my ($maxy, $maxx) = @{$self->{maxyx}};
 
-    my ($helpwin_maxy, $helpwin_maxx) = (15, 68);
+    my ($helpwin_maxy, $helpwin_maxx) = (13, 60);
+    return if $maxy < $helpwin_maxy || $maxx < $helpwin_maxx;
+
     my $helpwin = $win->derwin($helpwin_maxy,
                                $helpwin_maxx,
                                $maxy / 2 - $helpwin_maxy / 2,
                                $maxx / 2 - $helpwin_maxx / 2);
+
     $helpwin->clear;
     $helpwin->box(ACS_VLINE, ACS_HLINE);
-    $helpwin->addch(0, $helpwin_maxx / 2, ACS_TTEE);
-    $helpwin->addch($helpwin_maxy - 1, $helpwin_maxx / 2, ACS_BTEE);
-    $helpwin->vline(1, $helpwin_maxx / 2, ACS_VLINE, $helpwin_maxy - 2);
+    $helpwin->addch(0, $helpwin_maxx / 3, ACS_TTEE);
+    $helpwin->addch($helpwin_maxy - 1, $helpwin_maxx / 3, ACS_BTEE);
+    $helpwin->vline(1, $helpwin_maxx / 3, ACS_VLINE, $helpwin_maxy - 2);
 
     my $x = 2;
     my $y = 1;
     $helpwin->addstring($y++, $x, 'planets:');
     for my $planet (@{$self->{planets}}) {
         my $planet_name = $planet->name;
-        $helpwin->addstring($y, $x+1, $unicode ? $symbols{$planet_name}
-                                            : $abbrevs{$planet_name});
+        $helpwin->addstring($y, $x+1, $self->{symbols}->{$planet_name});
         $helpwin->addstring($y, $x+3, $planet_name);
         $y++;
     }
 
     $y = 1;
-    $x = $helpwin_maxx / 2 + 2;
+    $x = $helpwin_maxx / 3 + 2;
     $helpwin->addstring($y++, $x, 'key bindings:');
     $helpwin->addstring($y++, $x+1, 'h/l  go back/forward in time');
     $helpwin->addstring($y++, $x+1, 'n    go to the present time');
+    $helpwin->addstring($y++, $x+1, 'j/k  highlight next/previous planet');
+    $helpwin->addstring($y++, $x+1, 'c    clear selection');
     $helpwin->addstring($y++, $x+1, '?    help');
     $helpwin->addstring($y++, $x+1, 'q    quit');
+
+    $helpwin->addstring($helpwin_maxy - 2,
+                        $helpwin_maxx - 27,
+                        'press any key to continue');
 
     $helpwin->getchar;
 }
@@ -317,47 +440,49 @@ sub mainloop {
 
         alarm (60 - time % 60);
         my ($ch, $key) = $self->{win}->getchar;
+        next if !defined $ch && !defined $key;
 
-        if ($ch eq 'h') {
+        if ($ch && $ch eq 'h' || !$ch && $key == KEY_LEFT) {
+            $self->usenow(0);
+
             my $dt = $self->datetime;
-            if (!defined $dt) {
-                $dt = DateTime->now();
-            }
+            my $dt_hour = $dt->clone->truncate(to => 'hour');
 
-            if ($dt->minute || $dt->second || $dt->nanosecond) {
-                $dt->set_minute(0);
-                $dt->set_second(0);
-                $dt->set_nanosecond(0);
+            if ($dt > $dt_hour) {
+                $self->datetime($dt_hour);
             }
             else {
-                $dt->subtract(hours => 1);
+                $self->datetime($dt->clone->subtract(hours => 1));
             }
+        }
+        if ($ch && $ch eq 'l' || !$ch && $key == KEY_RIGHT) {
+            $self->usenow(0);
 
+            my $dt = $self->datetime->clone->truncate(to => 'hour');
+            $dt = $dt->clone->add(hours => 1);
             $self->datetime($dt);
         }
-        if ($ch eq 'l') {
-            my $dt = $self->datetime;
-            if (!defined $dt) {
-                $dt = DateTime->now();
-            }
-
-            if ($dt->minute || $dt->second || $dt->nanosecond) {
-                $dt->set_minute(0);
-                $dt->set_second(0);
-                $dt->set_nanosecond(0);
-            }
-            $dt->add(hours => 1);
-
-            $self->datetime($dt);
+        elsif ($ch && $ch eq 'n') {
+            $self->usenow(1);
         }
-        elsif ($ch eq 'n') {
-            $self->datetime(undef);
+        elsif ($ch && $ch eq 'j' || !$ch && $key == KEY_DOWN) {
+            my $index = $self->selected_index;
+            $index = -1 if !defined $index;
+            $self->selected_index(++$index);
         }
-        elsif ($ch eq '?') {
+        elsif ($ch && $ch eq 'k' || !$ch && $key == KEY_UP) {
+            my $index = $self->selected_index;
+            $index = 0 if !defined $index;
+            $self->selected_index(--$index);
+        }
+        elsif ($ch && $ch eq 'c' || $ch && $ch eq "\e") {
+            $self->selected_index(undef);
+        }
+        elsif ($ch && $ch eq '?') {
             alarm 0;
             $self->_show_help;
         }
-        elsif ($ch eq 'q') {
+        elsif ($ch && $ch eq 'q') {
             return;
         }
     }
