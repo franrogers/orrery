@@ -2,17 +2,21 @@ package Curses::Orrery;
 
 use strict;
 use warnings;
+use 5.10.0;
 
 use Astro::Coords::Planet;
 use Astro::MoonPhase;
 use Astro::Telescope;
 use Curses;
+use Data::Dumper;
 use DateTime;
 use I18N::Langinfo qw(langinfo CODESET);
+use List::Util qw(min);
 use Math::Trig qw(pi deg2rad);
 use POSIX qw(round);
+use Switch;
 
-our $VERSION = '1.00';
+our $VERSION = '0.10';
 
 
 my @PLANETS = (['sun',     3, 'S', "\x{2609}"],
@@ -35,11 +39,9 @@ sub new {
     $self->{datetime} = $args{datetime};
 
     $self->{range} = $args{range};
-    if (!defined $self->{range}) {
-        $self->{range} = $self->{telescope}->lat > 0
-                       ? [  0, 2*pi, -pi/2, pi/2]
-                       : [-pi,   pi, -pi/2, pi/2]
-    }
+    $self->{range} //= $self->{telescope}->lat > 0
+                     ? [  0, 2*pi, -pi/2, pi/2]
+                     : [-pi,   pi, -pi/2, pi/2];
 
     my (@planets, @draw_order, %symbols);
     foreach my $entry (@PLANETS) {
@@ -112,8 +114,9 @@ sub usenow {
     if (@_) {
         if (shift) {
             $self->datetime(undef);
-        } elsif (!defined $self->{datetime}) {
-            $self->datetime(DateTime->now);
+        }
+        else {
+            $self->{datetime} //= (DateTime->now);
         }
     }
     return !defined $self->{datetime};
@@ -127,23 +130,24 @@ sub selected {
     my $self = shift;
     if (@_) {
         my $planet = shift;
+        
+        $self->{index} = undef;
         foreach my $n (0 .. scalar @{$self->{planets}}) {
-            if ($planet == $self->{planets}->[$n]) {
+            if ($planet && $planet == $self->{planets}->[$n]) {
                 $self->{index} = $n;
                 last;
             }
         }
     }
-    return defined $self->{index} ? $self->{planets}->[$self->{index}] : undef;
+    return $self->{planets}->[$self->{index}];
 }
 
 sub selected_index {
     my $self = shift;
     if (@_) {
-        my $index = shift;
-        $self->{index} = defined $index
-                       ? $index % scalar @{$self->{planets}}
-                       : undef;
+        $self->{index} = shift;
+        $self->{index} %= scalar @{$self->{planets}}
+            if defined($self->{index});
     }
     return $self->{index};
 }
@@ -380,6 +384,8 @@ sub _draw_status {
 sub _show_help {
     my $self = shift;
   
+    alarm 0;
+
     my $win = $self->{win};
     my ($maxy, $maxx) = @{$self->{maxyx}};
 
@@ -437,48 +443,28 @@ sub mainloop {
         my ($ch, $key) = $self->{win}->getchar;
         next if !defined $ch && !defined $key;
 
-        if ($ch && $ch eq 'h' || !$ch && $key == KEY_LEFT) {
-            $self->usenow(0);
-
-            my $dt = $self->datetime;
-            my $dt_hour = $dt->clone->truncate(to => 'hour');
-
-            if ($dt > $dt_hour) {
-                $self->datetime($dt_hour);
+        switch ($ch || $key) {
+            case ['h', KEY_LEFT] {
+                $self->datetime($self->datetime
+                                     ->truncate(to => 'hour')
+                                     ->subtract(hours => 1));
             }
-            else {
-                $self->datetime($dt->clone->subtract(hours => 1));
+            case ['l', KEY_RIGHT] {
+                $self->datetime($self->datetime
+                                     ->truncate(to => 'hour')
+                                     ->add(hours => 1));
             }
-        }
-        if ($ch && $ch eq 'l' || !$ch && $key == KEY_RIGHT) {
-            $self->usenow(0);
+            case  'n'             { $self->usenow(1); }
+            case ['j', KEY_DOWN]  {
+                $self->selected_index(($self->selected_index // -1) + 1);
+            }
+            case ['k', KEY_UP]    {
+                $self->selected_index(($self->selected_index ||  0) - 1);
+            }
+            case ['c', "\e"]      { $self->selected_index(undef); }
 
-            my $dt = $self->datetime->clone->truncate(to => 'hour');
-            $dt = $dt->clone->add(hours => 1);
-            $self->datetime($dt);
-        }
-        elsif ($ch && $ch eq 'n') {
-            $self->usenow(1);
-        }
-        elsif ($ch && $ch eq 'j' || !$ch && $key == KEY_DOWN) {
-            my $index = $self->selected_index;
-            $index = -1 if !defined $index;
-            $self->selected_index(++$index);
-        }
-        elsif ($ch && $ch eq 'k' || !$ch && $key == KEY_UP) {
-            my $index = $self->selected_index;
-            $index = 0 if !defined $index;
-            $self->selected_index(--$index);
-        }
-        elsif ($ch && $ch eq 'c' || $ch && $ch eq "\e") {
-            $self->selected_index(undef);
-        }
-        elsif ($ch && $ch eq '?') {
-            alarm 0;
-            $self->_show_help;
-        }
-        elsif ($ch && $ch eq 'q') {
-            return;
+            case '?'              { $self->_show_help;  }
+            case 'q'              { return; }
         }
     }
 }

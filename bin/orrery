@@ -2,6 +2,7 @@
 
 use strict;
 use warnings;
+use 5.10.0;
 
 use Astro::Coords::Angle;
 use Astro::Telescope;
@@ -42,7 +43,7 @@ sub main {
     if ($alt =~ /^(\d+)\s*([a-z]+)$/i) {
         $alt = convert($1, $2, 'meters');
     }
-    $alt = 0 if !defined $alt;
+    $alt //= 0;
 
     unless (ref $lat && ref $long && looks_like_number $alt) {
         main::VERSION_MESSAGE;

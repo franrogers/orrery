@@ -5,11 +5,9 @@ Displays the positions of the sun, moon, and planets in the sky at a given locat
 ## Installation
 
 ```sh
-cpan Astro::Coords    \
-     Astro::MoonPhase \
-     Astro::Telescope \
-     Curses           \
-     Math::Units
+cpan Astro::Coords Astro::MoonPhase Astro::Telescope \
+     Curses        DateTime         Math::Units      \
+     Switch
 perl Makefile.PL
 make
 make install
