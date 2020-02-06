@@ -1,4 +1,4 @@
-package Orrery;
+package Curses::Orrery;
 
 use strict;
 use warnings;

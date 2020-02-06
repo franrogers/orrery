@@ -5,8 +5,8 @@ use warnings;
 use ExtUtils::MakeMaker;
 
 WriteMakefile(
-    NAME            => 'Orrery',
-    VERSION_FROM    => 'lib/Orrery.pm',
+    NAME            => 'Curses::Orrery',
+    VERSION_FROM    => 'lib/Curses/Orrery.pm',
     EXE_FILES       => ['bin/orrery'],
     PREREQ_PM       => {
         'Astro::Coords' => '0',

@@ -6,9 +6,9 @@ use warnings;
 use Astro::Coords::Angle;
 use Astro::Telescope;
 use File::Basename;
+use Curses::Orrery;
 use Getopt::Std;
 use Math::Units qw(convert);
-use Orrery;
 use Scalar::Util qw(looks_like_number);
 
 
@@ -55,7 +55,7 @@ sub main {
                                     Lat  => $lat,
                                     Alt  => $alt);
 
-    my $orrery = Orrery->new(telescope => $tel);
+    my $orrery = Curses::Orrery->new(telescope => $tel);
     $orrery->mainloop();
 }
 
