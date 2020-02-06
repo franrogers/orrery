@@ -32,22 +32,22 @@ Planets are displayed as planetary symbols if your environment is Unicode-aware,
 ### Key bindings
 
 * `h`/`l`: go back/forward in time
-* * `n`: go back to the present time
-* * `j`/`k`: highlight next/previous planet
-* * `c`: clear highlight
-* * `?`: help
-* * `q`: quit
-*
-* ### Symbols/abbreviations
-* * `☉`/`S`: Sun
-* * `☿`/`M`: Mercury
-* * `♀`/`v`: Venus
-* * `☽`/`L`: Moon (Luna)
-* * `♂`/`m`: Mars
-* * `♃`/`j`: Jupiter
-* * `♄`/`s`: Saturn
-* * `♅`/`u`: Uranus
-* * `♆`/`n`: Neptune
-*
-* ## License
-* [MIT](https://choosealicense.com/licenses/mit/)
+* `n`: go back to the present time
+* `j`/`k`: highlight next/previous planet
+* `c`: clear highlight
+* `?`: help
+* `q`: quit
+
+### Symbols/abbreviations
+* `☉`/`S`: Sun
+* `☿`/`M`: Mercury
+* `♀`/`v`: Venus
+* `☽`/`L`: Moon (Luna)
+* `♂`/`m`: Mars
+* `♃`/`j`: Jupiter
+* `♄`/`s`: Saturn
+* `♅`/`u`: Uranus
+* `♆`/`n`: Neptune
+
+## License
+[MIT](https://choosealicense.com/licenses/mit/)
