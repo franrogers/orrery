@@ -13,5 +13,6 @@ WriteMakefile(
         'Astro::MoonPhase' => '0',
         'Astro::Telescope' => '0',
         'Curses' => '0',
+        'Math::Units' => '0',
     },
 );

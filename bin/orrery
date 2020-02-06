@@ -5,16 +5,17 @@ use warnings;
 
 use Astro::Coords::Angle;
 use Astro::Telescope;
-use Encode qw(decode);
 use File::Basename;
 use Getopt::Std;
-use I18N::Langinfo qw(langinfo CODESET);
+use Math::Units qw(convert);
 use Orrery;
 use Scalar::Util qw(looks_like_number);
 
 
 sub main::HELP_MESSAGE {
-    print 'usage: ', basename($0), " LATITUDE LONGITUDE [ALTITUDE]\n";
+    print 'usage: ', basename($0), " LATITUDE LONGITUDE [ALTITUDE]\n\n";
+    print "  LATITUDE and LONGITUDE can be decimal or (-)HH:MM:SS\n";
+    print "  ALTITUDE assumes meters if no unit is specified\n";
 }
 
 sub main::VERSION_MESSAGE {
@@ -22,9 +23,6 @@ sub main::VERSION_MESSAGE {
 }
 
 sub main {
-    my $codeset = langinfo(CODESET);
-    @ARGV = map { decode $codeset, $_ } @ARGV;
-
     getopts('');
 
     unless (scalar @ARGV == 2 || scalar @ARGV == 3) {
@@ -33,82 +31,32 @@ sub main {
         exit 1;
     }
 
-    my $lat = shift @ARGV;
-    my $long = shift @ARGV;
+    my ($lat, $long) = map {
+        Astro::Coords::Angle->new($_,
+                                  units => looks_like_number($_)
+                                         ? 'degrees' : 'sexagesimal',
+                                  range => 'PI');
+    } (shift @ARGV, shift @ARGV);
+
     my $alt = shift @ARGV;
-
-    if ($lat =~ /[WE]$/i || $long =~ /[NS]$/) {
-        ($lat, $long) = ($long, $lat);
+    if ($alt =~ /^(\d+)\s*([a-z]+)$/i) {
+        $alt = convert($1, $2, 'meters');
     }
+    $alt = 0 if !defined $alt;
 
-    ($lat, $long) = (parse_angle($lat), parse_angle($long));
-    $alt = defined($alt) ? parse_alt($alt) : 0;
-
-    unless (defined $lat && defined $long && defined $alt) {
+    unless (ref $lat && ref $long && looks_like_number $alt) {
         main::VERSION_MESSAGE;
         main::HELP_MESSAGE;
         exit 1;
     }
 
-    my $tel = Astro::Telescope->new(Name => 'Orrery',
+    my $tel = Astro::Telescope->new(Name => 'orrery',
                                     Long => $long,
                                     Lat  => $lat,
                                     Alt  => $alt);
 
     my $orrery = Orrery->new(telescope => $tel);
     $orrery->mainloop();
-}
-
-sub parse_angle {
-    my $coord = shift;
-
-    if ($coord =~ s/\s?[SW]$//i) {
-        $coord = "-$coord";
-    }
-    else {
-        $coord =~ s/\s?[NE]$//i;
-    }
-
-    if (looks_like_number($coord)) {
-        return Astro::Coords::Angle->new($coord, units => 'degrees');
-    }
-    elsif ($coord =~ /^-?(?:\d+[\s:]){1,3}$/) {
-        return Astro::Coords::Angle->new($coord, units => 'sexagesimal');
-    }
-    elsif ($coord =~ /^(-?\d+\.?\d*)\x{B0}
-                       (?:(\d+\.?\d*)['\x{2032}]
-                          (?:(\d+\.?\d*)["\{2033}] )? )?$/ix) {
-        return Astro::Coords::Angle->new("$1:$2:$3", units => 'sexagesimal');
-    }
-    else {
-        return undef;
-    }
-}
-
-sub parse_alt {
-    my $alt = shift;
-
-    if (looks_like_number($alt)) {
-        return $alt;
-    }
-    elsif ($alt =~ /^(-?\d+\.?\d*)\s?m$/) {
-        return $1;
-    }
-    elsif ($alt =~ /^(-?\d+\.?\d*)\s?yd$/) {
-        return $1 * 0.9144;
-    }
-    elsif ($alt =~ /^(-?\d+\.?\d*)\s?ft$/) {
-        return $1 * 0.3048;
-    }
-    elsif ($alt =~ /^(-?\d+\.?\d*)\s?in$/) {
-        return $1 * 0.0254;
-    }
-    elsif ($alt =~ /^(\d+\.?\d*)['\x{2032}](?:(\d+\.?\d*)["\{2033}]?)?$/) {
-        return ($1 + $2 / 12) * 0.3048;
-    }
-    else {
-        return undef;
-    }
 }
 
 
