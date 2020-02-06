@@ -413,7 +413,7 @@ sub _show_help {
     $helpwin->addstring($y++, $x+1, 'h/l  go back/forward in time');
     $helpwin->addstring($y++, $x+1, 'n    go to the present time');
     $helpwin->addstring($y++, $x+1, 'j/k  highlight next/previous planet');
-    $helpwin->addstring($y++, $x+1, 'c    clear selection');
+    $helpwin->addstring($y++, $x+1, 'c    clear highlight');
     $helpwin->addstring($y++, $x+1, '?    help');
     $helpwin->addstring($y++, $x+1, 'q    quit');
 
