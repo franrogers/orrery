@@ -29,6 +29,8 @@ sub new {
     my ($class, %args) = @_;
     my $self = {};
 
+    $self->{unicode} = langinfo(CODESET) =~ /^utf|^ucs/i;
+
     $self->{telescope} = $args{telescope};
     $self->{datetime} = $args{datetime};
 
@@ -50,9 +52,7 @@ sub new {
 
         $draw_order[$z_order] = $planet;
 
-        $symbols{$planet_name} = langinfo(CODESET) =~ /^utf|^ucs/i
-                               ? $symbol
-                               : $abbrev;
+        $symbols{$planet_name} = $self->{unicode} ? $symbol : $abbrev;
     }
     $self->{planets} = \@planets;
     $self->{draw_order} = \@draw_order;
@@ -371,7 +371,7 @@ sub _draw_status {
     $win->addch($maxy - 1, $maxx - 23, ACS_BULLET)
         if !$self->usenow;
 
-    if (langinfo(CODESET) =~ /^utf|^ucs/i) {
+    if ($self->{unicode}) {
         $win->addstring($maxy - 2, $maxx - 22, "\x{263D}");
         $win->addstring($maxy - 1, $maxx - 22, "\x{2609}");
     }
