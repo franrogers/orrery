@@ -34,6 +34,8 @@ sub new {
     my $self = {};
 
     $self->{unicode} = langinfo(CODESET) =~ /^utf|^ucs/i;
+    $self->{unicode} = 0 if $^O eq 'darwin'; # UTF-8 is broken in macOS
+                                             # ncurses; I have no idea why
 
     $self->{telescope} = $args{telescope};
     $self->{datetime} = $args{datetime};
