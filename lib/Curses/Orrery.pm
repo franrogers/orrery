@@ -1,16 +1,17 @@
 package Curses::Orrery;
 
-use strict;
-use warnings;
 use 5.12.0;
+use Moose;
+use MooseX::Types::Moose qw(Num);
+use MooseX::Types::Structured qw(Tuple);
 
 use Astro::Coords::Planet;
 use Astro::MoonPhase;
 use Astro::Telescope;
 use Curses;
 use DateTime;
+use DateTime::TimeZone;
 use I18N::Langinfo qw(langinfo CODESET);
-use List::Util qw(min);
 use List::MoreUtils qw(firstidx sort_by);
 use Math::Trig qw(pi deg2rad);
 use POSIX qw(round);
@@ -19,108 +20,154 @@ use Switch;
 our $VERSION = '0.10';
 
 
-sub new {
-    my ($class, %args) = @_;
-    my $self = {};
+has 'telescope' => (
+    is       => 'ro',
+    isa      => 'Astro::Telescope',
+    required => 1,
+);
 
-    # telescope is the sole required argument
-    $self->{telescope} = $args{telescope}
-                       // die('telescope is required');
+has 'datetime' => (
+    is        => 'rw',
+    isa       => 'DateTime',
+    clearer   => 'clear_datetime',
+    predicate => 'has_datetime',
+    trigger   => \&_datetime_set,
+);
 
-    # populate things
-    $self->{datetime}  = $args{datetime};
+sub _datetime_set {
+    my ($self, $dt) = @_;
 
-    # default azimuth range is 0..2*pi in northern hemisphere, -pi..pi in 
-    # the southern. default elevation range is always -pi/2..pi/2
-    $self->{range} = $args{range};
-    $self->{range} //= $self->{telescope}->lat > 0
-                     ? [  0, 2*pi, -pi/2, pi/2]
-                     : [-pi,   pi, -pi/2, pi/2];
+    foreach my $planet (@{$self->planets}) {
+        $planet->datetime($dt);
+    }
+}
 
-    # use @PLANETS table to populate data structures
+after 'clear_datetime' => sub {
+    my $self = shift;
+
+    foreach my $planet (@{$self->planets}) {
+        $planet->datetime(undef);
+    }
+};
+
+has 'time_zone' => (
+    is      => 'rw',
+    isa     => 'DateTime::TimeZone',
+    default => sub { DateTime::TimeZone->new(name => 'local') },
+);
+
+has 'range' => (
+    is      => 'rw',
+    isa     => Tuple[Num, Num, Num, Num],
+    lazy    => 1,
+    builder => '_range_builder',
+);
+
+sub _range_builder {
+    my $self = shift;
+
+    return $self->telescope->lat > 0 ? [  0, 2*pi, -pi/2, pi/2]
+                                     : [-pi,   pi, -pi/2, pi/2];
+}
+
+has 'planets' => (
+    is       => 'ro',
+    isa      => 'ArrayRef[Astro::Coords::Planet]',
+    init_arg => undef,
+    builder  => '_planets_builder',
+    handles   => {
+        _planets_index => 'add',
+    },
+);
+
+sub _planets_builder {
+    my $self = shift;
+
     my @planets;
     foreach my $planet_name (@Astro::Coords::Planet::PLANETS) {
         my $planet = Astro::Coords::Planet->new($planet_name);
-        $planet->telescope($self->{telescope});
-        $planet->datetime($self->{datetime});
+        $planet->telescope($self->telescope);
+        $planet->datetime($self->datetime);
         push @planets, $planet;
     }
-    $self->{planets} = \@planets;
+    return \@planets;
+}
 
-    # select a planet if the user specified an index or ref
-    $self->{index} = $args{selected_index};
-    if (defined $args{selected}) {
-        my $i = firstidx { $_ == $args{selected} } @planets;
-        $self->{index} = $i if $i != -1;
-    }
+has 'selection_index' => (
+    is        => 'rw',
+    isa       => 'Int',
+    clearer   => 'clear_selection',
+    predicate => 'has_selection',
+    trigger   => \&_selection_index_set,
+);
 
-    # cache the local time zone for later, because lookup is slow.
-    # note that $self->datetime should always be UTC
-    $self->{time_zone} = $args{time_zone} || 'local';
-    if ($self->{time_zone} eq 'local') {
-        $self->{time_zone} = DateTime::TimeZone->new(name => 'local');
+sub _selection_index_set {
+    my ($self, $index) = @_;
+
+    my $num_planets = @{$self->planets};
+    if ($index >= $num_planets) {
+        $self->selection_index($index % $num_planets);
     }
+    elsif ($index < 0) {
+        $self->selection_index($num_planets - 1);
+    }
+}
+
+has 'unicode' => (
+    is      => 'rw',
+    isa     => 'Bool',
+    default => 1,
+);
+
+sub BUILD {
+    my $self = shift;
 
     # init curses
     initscr;
     $stdscr->keypad(1);
     curs_set 0;
     noecho;
-    $self->{unicode} = $args{unicode} // &_test_unicode;
 
-    return bless $self, $class;
-}
-
-sub DESTROY {
-    endwin;
-}
-
-sub _test_unicode {
     # is the current codeset a Unicode one?
-    return 0 if langinfo(CODESET) !~ /^utf|^ucs/i;
+    my $unicodeset = langinfo(CODESET) =~ /^utf|^ucs/i;
 
     # is our curses wide-aware?
     # or does it treat UTF-8 as byte sequences?
     addstring 0, 0, "\x{FEFF}";
     getyx my $y, my $x;
-    return $y * $COLS + $x;
-};
+    my $wide_aware = 1 == $y * $COLS + $x;
 
-sub datetime {
-    my $self = shift;
-    if (@_) {
-        $self->{datetime} = shift;
-
-        for my $planet (@{$self->{planets}}) {
-            $planet->datetime($self->{datetime});
-        }
-    }
-    return $self->{datetime} || DateTime->now;
+    # if either of the above is true, turn Unicode off
+    $self->unicode(0) if !$unicodeset || !$wide_aware;
 }
 
-sub datetime_local {
-    my $self = shift;
-    my $dt = $self->datetime->clone;
-    return $dt->set_time_zone($self->{time_zone});
+sub DEMOLISH {
+    endwin;
 }
 
-sub usenow {
+sub select_next {
     my $self = shift;
-    if (@_) {
-        if (shift) {
-            $self->datetime(undef);
-        }
-        else {
-            $self->{datetime} //= (DateTime->now);
-        }
-    }
-    return !defined $self->{datetime};
+    $self->selection_index( $self->has_selection
+                          ? $self->selection_index + 1
+                          : 0);
 }
 
-sub planets {
+sub select_prev {
     my $self = shift;
-    return @{$self->{planets}};
+    $self->selection_index( $self->has_selection
+                          ? $self->selection_index - 1
+                          : @{$self->planets} - 1);
 }
+
+sub advance_to_next {
+    my ($self, $time_part, $magnitude) = @_;
+ 
+    my $dt = $self->has_datetime ? $self->datetime->clone : DateTime->now;
+    $dt = $dt->truncate(to => $time_part);
+    $dt = $dt->add("${time_part}s", $magnitude);
+    $self->datetime($dt);
+}
+    
 
 sub _planet_symbol {
     my $self = shift;
@@ -135,7 +182,7 @@ sub _planet_symbol {
                    saturn  => "\x{2644}", uranus  => "\x{2645}",
                    neptune => "\x{2646}");
 
-    return $self->{unicode}
+    return $self->unicode
          ? $symbols{$planet->name}
          : $abbrevs{$planet->name};
 }
@@ -149,40 +196,8 @@ sub _planet_draw_order {
                         venus   mercury moon);
     $self->{draw_order} //= [sort_by { my $n = $_->name;
                                        firstidx { $_ eq $n } @draw_order
-                                     } $self->planets];
+                                     } @{$self->planets}];
     return @{$self->{draw_order}};
-}
-
-sub selected {
-    my $self = shift;
-    if (@_) {
-        my $planet = shift;
-       
-        my $i = firstidx { $_ == $planet } $self->planets;
-        $self->{index} = $i != -1
-                       ? $i
-                       : undef;
-    }
-    return $self->{planets}->[$self->{index}];
-}
-
-sub selected_index {
-    my $self = shift;
-    if (@_) {
-        $self->{index} = shift;
-        $self->{index} %= scalar $self->planets
-            if defined($self->{index});
-    }
-    return $self->{index};
-}
-
-sub range {
-    my $self = shift;
-    if (@_) {
-        my ($min_az, $max_az, $min_el, $max_el) = @_;
-        $self->{range} = [$min_az, $max_az, $min_el, $max_el];
-    }
-    return $self->{range};
 }
 
 sub _azel_yx {
@@ -190,7 +205,7 @@ sub _azel_yx {
     my $az = shift;
     my $el = shift;
 
-    my ($min_az, $max_az, $min_el, $max_el) = @{$self->{range}};
+    my ($min_az, $max_az, $min_el, $max_el) = @{$self->range};
 
     $az = -2*pi + $az if $az > $max_az;
    
@@ -260,8 +275,8 @@ sub _draw_axes {
     foreach my $az (0, pi) {
         my $x_line = $self->_az_x($az);
 
-        next if $az == $self->{range}->[0]
-             || $az == $self->{range}->[1];
+        next if $az == $self->range->[0]
+             || $az == $self->range->[1];
 
         vline       0, $x_line, ACS_VLINE, $LINES;
         addch $y_line, $x_line, ACS_PLUS;
@@ -291,9 +306,9 @@ sub _draw_planet {
 sub _draw_selection {
     my $self = shift;
 
-    return if !defined $self->{index};
+    return if !$self->has_selection;
 
-    my $planet = $self->{planets}->[$self->{index}];
+    my $planet = $self->planets->[$self->selection_index];
 
     my ($az, $el) = $planet->azel;
 
@@ -328,9 +343,8 @@ sub _draw_selection {
 
     # print the date alongside the time if it isn't same-day
     my $event_time = sub {
-        my $dt = shift->clone->set_time_zone($self->{time_zone});
-        
-        my $today = $self->datetime_local->truncate(to => 'day');
+        my $dt = shift->clone->set_time_zone($self->time_zone);
+        my $today = DateTime->today(time_zone => $self->time_zone);
 
         if (!defined $dt) {
             return 'never';
@@ -354,14 +368,17 @@ sub _draw_selection {
 sub _draw_status {
     my $self = shift;
 
-    my $dt = $self->datetime_local;
+    my $dt = $self->has_datetime
+           ? $self->datetime->clone
+           : DateTime->now;
+    $dt->set_time_zone($self->time_zone);
 
     # bottom left: viewer long, lat, alt
     my ($lat_sign,   $lat_d,  $lat_m,  $lat_s) =
-        $self->{telescope}->lat->components;
+        $self->telescope->lat->components;
     my ($long_sign, $long_d, $long_m, $long_s) =
-        $self->{telescope}->long->components;
-    my $alt = $self->{telescope}->alt;
+        $self->telescope->long->components;
+    my $alt = $self->telescope->alt;
 
     my $lower_left = sprintf(q{%3d %02d'%02d"%s %3d %02d'%02d"%s %4dm},
                              $lat_d,   $lat_m,  $lat_s,
@@ -392,21 +409,18 @@ sub _draw_status {
     # bottom right, line 2: solar time
     my $lower_right = sprintf('%s', $dt->strftime('%a %F %R'));
     addstring $LINES - 1, $COLS - length($lower_right), $lower_right;
-    if (!$self->usenow) {
+    if ($self->has_datetime) {
         addch $LINES - 1, $COLS - 23, ACS_BULLET;
     }
 
-    if ($self->{unicode}) {
+    if ($self->unicode) {
         addstring $LINES - 2, $COLS - 22, "\x{263D}";
         addstring $LINES - 1, $COLS - 22, "\x{2609}";
     }
 }
     
-sub _show_help {
+sub show_help {
     my $self = shift;
-
-    # turn off the periodic SIGALRM in mainloop
-    alarm 0;
 
     # terminal needs to be at least 60x13 to fit help on screen
     my ($helpwin_lines, $helpwin_cols) = (13, 60);
@@ -429,7 +443,7 @@ sub _show_help {
     my $x = 2;
     my $y = 1;
     $helpwin->addstring($y++, $x, 'planets:');
-    for my $planet (@{$self->{planets}}) {
+    for my $planet (@{$self->planets}) {
         $helpwin->addstring($y, $x+1, $self->_planet_symbol($planet));
         $helpwin->addstring($y, $x+3, $planet->name);
         $y++;
@@ -471,26 +485,14 @@ sub mainloop {
         next if !defined $ch && !defined $key;
 
         switch ($ch || $key) {
-            case ['h', KEY_LEFT] {
-                $self->datetime($self->datetime
-                                     ->truncate(to => 'hour')
-                                     ->subtract(hours => 1));
-            }
-            case ['l', KEY_RIGHT] {
-                $self->datetime($self->datetime
-                                     ->truncate(to => 'hour')
-                                     ->add(hours => 1));
-            }
-            case  'n'             { $self->usenow(1); }
-            case ['j', KEY_DOWN]  {
-                $self->selected_index(($self->selected_index // -1) + 1);
-            }
-            case ['k', KEY_UP]    {
-                $self->selected_index(($self->selected_index ||  0) - 1);
-            }
-            case ['c', "\e"]      { $self->selected_index(undef); }
-
-            case '?'              { $self->_show_help;  }
+            case ['h', KEY_LEFT]  { $self->advance_to_next('hour', -1); }
+            case ['l', KEY_RIGHT] { $self->advance_to_next('hour',  1); }
+            case  'n'             { $self->clear_datetime; }
+            case ['j', KEY_DOWN]  { $self->select_next; }
+            case ['k', KEY_UP]    { $self->select_prev; }
+            case ['c', "\e"]      { $self->clear_selection; }
+            case '?'              { alarm 0;
+                                    $self->show_help;  }
             case 'q'              { return; }
         }
     }

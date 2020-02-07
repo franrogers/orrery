@@ -5,10 +5,12 @@ Displays the positions of the sun, moon, and planets in the sky at a given locat
 ## Installation
 
 ```sh
-cpan Astro::Coords Astro::MoonPhase Astro::Telescope \
-     Curses        DateTime         List::MoreUtils  \
-     Math::Units   Switch
+cpan MakeMaker
 perl Makefile.PL
+perl -0777 -MCPAN -MCPAN::Meta::YAML \
+     -e '@reqs = keys %{Load(<>)->{requires}};' \
+     -e 'map {CPAN::Shell->install($_)} @reqs;' \
+     MYMETA.yml
 make
 make install
 ```
