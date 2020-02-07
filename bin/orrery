@@ -2,7 +2,7 @@
 
 use strict;
 use warnings;
-use 5.10.0;
+use 5.12.0;
 
 use Astro::Coords::Angle;
 use Astro::Telescope;
@@ -24,14 +24,17 @@ sub main::VERSION_MESSAGE {
 }
 
 sub main {
-    getopts('');
+    my ($opt_a, $opt_u);
+    getopts('au');
 
+    # LATITUDE and LONGITUDE are required
     unless (scalar @ARGV == 2 || scalar @ARGV == 3) {
         main::VERSION_MESSAGE;
         main::HELP_MESSAGE;
         exit 1;
     }
 
+    # parse LATITUDE, LONGITUDE
     my ($lat, $long) = map {
         Astro::Coords::Angle->new($_,
                                   units => looks_like_number($_)
@@ -39,25 +42,34 @@ sub main {
                                   range => 'PI');
     } (shift @ARGV, shift @ARGV);
 
+    # parse ALTITUDE
     my $alt = shift @ARGV;
     if ($alt =~ /^(\d+)\s*([a-z]+)$/i) {
         $alt = convert($1, $2, 'meters');
     }
     $alt //= 0;
 
+    # error out if args aren't sane
     unless (ref $lat && ref $long && looks_like_number $alt) {
         main::VERSION_MESSAGE;
         main::HELP_MESSAGE;
         exit 1;
     }
 
+    # unicode defaults to on unless -a is specified.
+    # Curses::Orrery will turn it off if unsupported
+    my $unicode = !$opt_a;
+
+    # start up a Curses::Orrery
     my $tel = Astro::Telescope->new(Name => 'orrery',
                                     Long => $long,
                                     Lat  => $lat,
                                     Alt  => $alt);
-
-    my $orrery = Curses::Orrery->new(telescope => $tel);
+    my $orrery = Curses::Orrery->new(telescope => $tel,
+                                     unicode => $unicode);
     $orrery->mainloop();
+
+    exit 0;
 }
 
 

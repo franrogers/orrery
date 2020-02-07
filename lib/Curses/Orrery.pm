@@ -2,16 +2,16 @@ package Curses::Orrery;
 
 use strict;
 use warnings;
-use 5.10.0;
+use 5.12.0;
 
 use Astro::Coords::Planet;
 use Astro::MoonPhase;
 use Astro::Telescope;
 use Curses;
-use Data::Dumper;
 use DateTime;
 use I18N::Langinfo qw(langinfo CODESET);
 use List::Util qw(min);
+use List::MoreUtils qw(firstidx sort_by);
 use Math::Trig qw(pi deg2rad);
 use POSIX qw(round);
 use Switch;
@@ -19,62 +19,54 @@ use Switch;
 our $VERSION = '0.10';
 
 
-my @PLANETS = (['sun',     3, 'S', "\x{2609}"],
-               ['mercury', 2, 'M', "\x{263f}"],
-               ['venus',   1, 'v', "\x{2640}"],
-               ['moon',    0, 'L', "\x{263D}"],
-               ['mars',    4, 'm', "\x{2642}"],
-               ['jupiter', 5, 'j', "\x{2643}"],
-               ['saturn',  6, 's', "\x{2644}"],
-               ['uranus',  7, 'u', "\x{2645}"],
-               ['neptune', 8, 'n', "\x{2646}"]);
-
 sub new {
     my ($class, %args) = @_;
     my $self = {};
 
-    $self->{unicode} = langinfo(CODESET) =~ /^utf|^ucs/i;
-    $self->{unicode} = 0 if $^O eq 'darwin'; # UTF-8 is broken in macOS
-                                             # ncurses; I have no idea why
+    # telescope is the sole required argument
+    $self->{telescope} = $args{telescope}
+                       // die('telescope is required');
 
-    $self->{telescope} = $args{telescope};
-    $self->{datetime} = $args{datetime};
+    # populate things
+    $self->{datetime}  = $args{datetime};
 
+    # default azimuth range is 0..2*pi in northern hemisphere, -pi..pi in 
+    # the southern. default elevation range is always -pi/2..pi/2
     $self->{range} = $args{range};
     $self->{range} //= $self->{telescope}->lat > 0
                      ? [  0, 2*pi, -pi/2, pi/2]
                      : [-pi,   pi, -pi/2, pi/2];
 
-    my (@planets, @draw_order, %symbols);
-    foreach my $entry (@PLANETS) {
-        my ($planet_name, $z_order, $abbrev, $symbol) = @$entry;
-
+    # use @PLANETS table to populate data structures
+    my @planets;
+    foreach my $planet_name (@Astro::Coords::Planet::PLANETS) {
         my $planet = Astro::Coords::Planet->new($planet_name);
         $planet->telescope($self->{telescope});
         $planet->datetime($self->{datetime});
         push @planets, $planet;
-
-        $draw_order[$z_order] = $planet;
-
-        $symbols{$planet_name} = $self->{unicode} ? $symbol : $abbrev;
     }
     $self->{planets} = \@planets;
-    $self->{draw_order} = \@draw_order;
-    $self->{symbols} = \%symbols;
 
-    $self->{index} = undef;
+    # select a planet if the user specified an index or ref
+    $self->{index} = $args{selected_index};
+    if (defined $args{selected}) {
+        my $i = firstidx { $_ == $args{selected} } @planets;
+        $self->{index} = $i if $i != -1;
+    }
 
+    # cache the local time zone for later, because lookup is slow.
+    # note that $self->datetime should always be UTC
     $self->{time_zone} = $args{time_zone} || 'local';
     if ($self->{time_zone} eq 'local') {
         $self->{time_zone} = DateTime::TimeZone->new(name => 'local');
     }
 
-    $self->{win} = Curses->new;
-    $self->{win}->keypad(1);
+    # init curses
+    initscr;
+    $stdscr->keypad(1);
     curs_set 0;
     noecho;
-    $self->{win}->getmaxyx(my $maxy, my $maxx);
-    $self->{maxyx} = [$maxy, $maxx];
+    $self->{unicode} = $args{unicode} // &_test_unicode;
 
     return bless $self, $class;
 }
@@ -83,15 +75,16 @@ sub DESTROY {
     endwin;
 }
 
-sub _resize {
-    my $self = shift;
+sub _test_unicode {
+    # is the current codeset a Unicode one?
+    return 0 if langinfo(CODESET) !~ /^utf|^ucs/i;
 
-    endwin;
-    refresh;
-    my ($maxy, $maxx);
-    $self->{win}->getmaxyx($maxy, $maxx);
-    $self->{maxyx} = [$maxy, $maxx];
-}
+    # is our curses wide-aware?
+    # or does it treat UTF-8 as byte sequences?
+    addstring 0, 0, "\x{FEFF}";
+    getyx my $y, my $x;
+    return $y * $COLS + $x;
+};
 
 sub datetime {
     my $self = shift;
@@ -125,21 +118,50 @@ sub usenow {
 }
 
 sub planets {
-    return @{shift->{planets}};
+    my $self = shift;
+    return @{$self->{planets}};
+}
+
+sub _planet_symbol {
+    my $self = shift;
+    my $planet = shift;
+
+    my %abbrevs = (sun     => 'S', mercury => 'M', venus   => 'v',
+                   moon    => 'L', mars    => 'm', jupiter => 'j',
+                   saturn  => 's', uranus  => 'u', neptune => 'n');
+    my %symbols = (sun     => "\x{2609}", mercury => "\x{263f}",
+                   venus   => "\x{2640}", moon    => "\x{263D}",
+                   mars    => "\x{2642}", jupiter => "\x{2643}",
+                   saturn  => "\x{2644}", uranus  => "\x{2645}",
+                   neptune => "\x{2646}");
+
+    return $self->{unicode}
+         ? $symbols{$planet->name}
+         : $abbrevs{$planet->name};
+}
+
+sub _planet_draw_order {
+    my $self = shift;
+
+    # planet draw order, farthest to nearest
+    my @draw_order = qw(neptune uranus  saturn
+                        jupiter mars    sun
+                        venus   mercury moon);
+    $self->{draw_order} //= [sort_by { my $n = $_->name;
+                                       firstidx { $_ eq $n } @draw_order
+                                     } $self->planets];
+    return @{$self->{draw_order}};
 }
 
 sub selected {
     my $self = shift;
     if (@_) {
         my $planet = shift;
-        
-        $self->{index} = undef;
-        foreach my $n (0 .. scalar @{$self->{planets}}) {
-            if ($planet && $planet == $self->{planets}->[$n]) {
-                $self->{index} = $n;
-                last;
-            }
-        }
+       
+        my $i = firstidx { $_ == $planet } $self->planets;
+        $self->{index} = $i != -1
+                       ? $i
+                       : undef;
     }
     return $self->{planets}->[$self->{index}];
 }
@@ -148,7 +170,7 @@ sub selected_index {
     my $self = shift;
     if (@_) {
         $self->{index} = shift;
-        $self->{index} %= scalar @{$self->{planets}}
+        $self->{index} %= scalar $self->planets
             if defined($self->{index});
     }
     return $self->{index};
@@ -163,37 +185,35 @@ sub range {
     return $self->{range};
 }
 
-sub _azel_to_yx {
+sub _azel_yx {
     my $self = shift;
     my $az = shift;
     my $el = shift;
-
-    my ($maxy, $maxx) = @{$self->{maxyx}};
 
     my ($min_az, $max_az, $min_el, $max_el) = @{$self->{range}};
 
     $az = -2*pi + $az if $az > $max_az;
    
-    my $y = round($maxy - $maxy * ($el - $min_el) / ($max_el - $min_el));
-    my $x = round(        $maxx * ($az - $min_az) / ($max_az - $min_az));
+    my $y = round($LINES - $LINES * ($el - $min_el) / ($max_el - $min_el));
+    my $x = round(         $COLS  * ($az - $min_az) / ($max_az - $min_az));
 
     return ($y, $x);
 }
 
-sub _az_to_x {
+sub _az_x {
     my $self = shift;
     my $az = shift;
 
-    my ($y, $x) = $self->_azel_to_yx($az, 0);
+    my ($y, $x) = $self->_azel_yx($az, 0);
 
     return $x;
 }
 
-sub _el_to_y {
+sub _el_y {
     my $self = shift;
     my $el = shift;
     
-    my ($y, $x) = $self->_azel_to_yx(0, $el);
+    my ($y, $x) = $self->_azel_yx(0, $el);
 
     return $y;
 }
@@ -201,12 +221,11 @@ sub _el_to_y {
 sub draw {
     my $self = shift;
 
-    my $win = $self->{win};
-    $win->clear;
+    clear;
 
     $self->_draw_axes;
 
-    foreach my $planet (reverse @{$self->{draw_order}}) {
+    foreach my $planet ($self->_planet_draw_order) {
         $self->_draw_planet($planet);
     }
 
@@ -214,48 +233,46 @@ sub draw {
 
     $self->_draw_status;
 
-    $win->refresh;
+    refresh;
 }
 
 sub _draw_axes {
     my $self = shift;
 
-    my $win = $self->{win};
-    my ($maxy, $maxx) = @{$self->{maxyx}};
-
-    my $y_line = $self->_el_to_y(0);
-    $win->hline($y_line, 0, ACS_HLINE, $maxx);
-
+    # x axis
+    my $y_line = $self->_el_y(0);
+    hline($y_line, 0, ACS_HLINE, $COLS);
     foreach my $az (45, 90, 135, 180, 225, 270, 315) {
-        my $x_label = $self->_az_to_x(deg2rad($az));
+        my $x_label = $self->_az_x(deg2rad($az));
 
         if ($az == 90) {
-            $win->addstring($y_line, $x_label, 'E');
+            addstring $y_line, $x_label, 'E';
         }
         elsif ($az == 270) {
-            $win->addstring($y_line, $x_label, 'W');
+            addstring $y_line, $x_label, 'W';
         }
         else {
-            $win->addch($y_line, $x_label, ACS_PLUS);
+            addch     $y_line, $x_label, ACS_PLUS;
         }
     }
 
+    # y axes (one each at due north and due south)
     foreach my $az (0, pi) {
-        my $x_line = $self->_az_to_x($az);
+        my $x_line = $self->_az_x($az);
 
         next if $az == $self->{range}->[0]
              || $az == $self->{range}->[1];
 
-        $win->vline(0, $x_line, ACS_VLINE, $maxy);
-        $win->addch($y_line, $x_line, ACS_PLUS);
+        vline       0, $x_line, ACS_VLINE, $LINES;
+        addch $y_line, $x_line, ACS_PLUS;
 
         foreach my $el (-60, -30, 0, 30, 60) {
-            my $y_label = $self->_el_to_y(deg2rad($el));
+            my $y_label = $self->_el_y(deg2rad($el));
             if (!$el) {
-                $win->addch($y_label, $x_line, ACS_PLUS);
+                addch     $y_label, $x_line, ACS_PLUS;
             } else {
-                $win->addstring($y_label, $x_line - 2, sprintf('% 2d', $el));
-                $win->addch($y_label, $x_line + 1, ACS_DEGREE);
+                addstring $y_label, $x_line - 2, sprintf('% 2d', $el);
+                addch     $y_label, $x_line + 1, ACS_DEGREE;
             }
         }
     }
@@ -265,13 +282,10 @@ sub _draw_planet {
     my $self = shift;
     my $planet = shift;
 
-    my $win = $self->{win};
-    my ($maxy, $maxx) = @{$self->{maxyx}};
-
     my ($az, $el) = $planet->azel;
-    my ($y, $x) = $self->_azel_to_yx($az->radians, $el->radians);
+    my ($y, $x) = $self->_azel_yx($az->radians, $el->radians);
     
-    $win->addstring($y, $x, $self->{symbols}->{$planet->name});
+    addstring $y, $x, $self->_planet_symbol($planet);
 }
 
 sub _draw_selection {
@@ -279,26 +293,40 @@ sub _draw_selection {
 
     return if !defined $self->{index};
 
-    my $win = $self->{win};
-    my ($maxy, $maxx) = @{$self->{maxyx}};
-
     my $planet = $self->{planets}->[$self->{index}];
 
     my ($az, $el) = $planet->azel;
 
-    $win->attron(A_REVERSE);
+    # redraw the planet in reverse video
+    attron(A_REVERSE);
     $self->_draw_planet($planet);
-    $win->attroff(A_REVERSE);
+    attroff(A_REVERSE);
 
-    $win->addstring(0, 0, $planet->name);
+    # top left display
+    # name
+    addstring 0, 0, $planet->name;
 
-    $win->addstring(2, 2, 'azimuth:');
-    $win->addstring(2, 13, sprintf('% 3d', $az->degrees));
-    $win->addch(2, 16, ACS_DEGREE);
-    $win->addstring(3, 0, 'elevation:');
-    $win->addstring(3, 13, sprintf('% 3d', $el->degrees));
-    $win->addch(3, 16, ACS_DEGREE);
+    # az/el
+    addstring 2, 2, 'azimuth:';
+    addstring 2, 13, sprintf('% 3d', $az->degrees);
+    addch     2, 16, ACS_DEGREE;
+    addstring 3, 0, 'elevation:';
+    addstring 3, 13, sprintf('% 3d', $el->degrees);
+    addch     3, 16, ACS_DEGREE;
 
+    # rise/transit/set
+    # first find the nearest transit
+    my $transit = $planet->meridian_time(nearest => 1);
+
+    # then pick the rise/set in the same cycle
+    my $prev_rise = $planet->rise_time(event => -1);
+    my $next_rise = $planet->rise_time(event =>  1);
+    my $prev_set  = $planet->set_time (event => -1);
+    my $next_set  = $planet->set_time (event =>  1);
+    my $rise = $transit > $next_rise ? $next_rise : $prev_rise;
+    my $set  = $transit < $prev_set  ? $prev_set  : $next_set;
+
+    # print the date alongside the time if it isn't same-day
     my $event_time = sub {
         my $dt = shift->clone->set_time_zone($self->{time_zone});
         
@@ -314,31 +342,21 @@ sub _draw_selection {
             return $dt->strftime('%R %d %b');
         }
     };
-
-    my $transit = $planet->meridian_time(nearest => 1);
-
-    my $prev_rise = $planet->rise_time(event => -1);
-    my $next_rise = $planet->rise_time(event =>  1);
-    my $prev_set  = $planet->set_time (event => -1);
-    my $next_set  = $planet->set_time (event =>  1);
-
-    my $rise = $transit > $next_rise ? $next_rise : $prev_rise;
-    my $set  = $transit < $prev_set  ? $prev_set  : $next_set;
     
-    $win->addstring(5,  5, 'rise:');
-    $win->addstring(5, 11, &{$event_time}($rise));
-    $win->addstring(6,  2, 'transit:');
-    $win->addstring(6, 11, &{$event_time}($transit));
-    $win->addstring(7,  6, 'set:');
-    $win->addstring(7, 11, &{$event_time}($set));
+    addstring 5,  5, 'rise:';
+    addstring 5, 11, &{$event_time}($rise);
+    addstring 6,  2, 'transit:';
+    addstring 6, 11, &{$event_time}($transit);
+    addstring 7,  6, 'set:';
+    addstring 7, 11, &{$event_time}($set);
 }
 
 sub _draw_status {
     my $self = shift;
 
-    my $win = $self->{win};
-    my ($maxy, $maxx) = @{$self->{maxyx}};
+    my $dt = $self->datetime_local;
 
+    # bottom left: viewer long, lat, alt
     my ($lat_sign,   $lat_d,  $lat_m,  $lat_s) =
         $self->{telescope}->lat->components;
     my ($long_sign, $long_d, $long_m, $long_s) =
@@ -351,12 +369,11 @@ sub _draw_status {
                              $long_d, $long_m, $long_s,
                              $long_sign eq '+' ? 'E' : 'W',
                              $alt);
-    $win->addstring($maxy - 1, 0, $lower_left);
-    $win->addch($maxy - 1, 3, ACS_DEGREE);
-    $win->addch($maxy - 1, 15, ACS_DEGREE);
+    addstring $LINES - 1, 0, $lower_left;
+    addch     $LINES - 1, 3, ACS_DEGREE;
+    addch     $LINES - 1, 15, ACS_DEGREE;
 
-    my $dt = $self->datetime_local;
-
+    # bottom right, line 1: moon phase, illum%
     my ($phase, $illum) = (phase($dt->epoch))[0..1];
     my $phase_name = $phase < 0.02 ? 'new' :
                      $phase < 0.24 ? 'waxing crescent' :
@@ -370,53 +387,57 @@ sub _draw_status {
     my $lower_right2 = sprintf($illum < 1 ? '%s %2d%%': '%s --%',
                                $phase_name,
                                int($illum * 100));
-    $win->addstring($maxy - 2, $maxx - length($lower_right2), $lower_right2);
+    addstring $LINES - 2, $COLS - length($lower_right2), $lower_right2;
 
+    # bottom right, line 2: solar time
     my $lower_right = sprintf('%s', $dt->strftime('%a %F %R'));
-    $win->addstring($maxy - 1, $maxx - length($lower_right), $lower_right);
-    $win->addch($maxy - 1, $maxx - 23, ACS_BULLET)
-        if !$self->usenow;
+    addstring $LINES - 1, $COLS - length($lower_right), $lower_right;
+    if (!$self->usenow) {
+        addch $LINES - 1, $COLS - 23, ACS_BULLET;
+    }
 
     if ($self->{unicode}) {
-        $win->addstring($maxy - 2, $maxx - 22, "\x{263D}");
-        $win->addstring($maxy - 1, $maxx - 22, "\x{2609}");
+        addstring $LINES - 2, $COLS - 22, "\x{263D}";
+        addstring $LINES - 1, $COLS - 22, "\x{2609}";
     }
 }
     
 sub _show_help {
     my $self = shift;
-  
+
+    # turn off the periodic SIGALRM in mainloop
     alarm 0;
 
-    my $win = $self->{win};
-    my ($maxy, $maxx) = @{$self->{maxyx}};
+    # terminal needs to be at least 60x13 to fit help on screen
+    my ($helpwin_lines, $helpwin_cols) = (13, 60);
+    return if $LINES < $helpwin_lines || $COLS < $helpwin_cols;
 
-    my ($helpwin_maxy, $helpwin_maxx) = (13, 60);
-    return if $maxy < $helpwin_maxy || $maxx < $helpwin_maxx;
-
-    my $helpwin = $win->derwin($helpwin_maxy,
-                               $helpwin_maxx,
-                               $maxy / 2 - $helpwin_maxy / 2,
-                               $maxx / 2 - $helpwin_maxx / 2);
-
+    # create the help window
+    my $helpwin = $stdscr->derwin($helpwin_lines,
+                                  $helpwin_cols,
+                                  $LINES / 2 - $helpwin_lines / 2,
+                                  $COLS  / 2 - $helpwin_cols  / 2);
     $helpwin->clear;
     $helpwin->box(ACS_VLINE, ACS_HLINE);
-    $helpwin->addch(0, $helpwin_maxx / 3, ACS_TTEE);
-    $helpwin->addch($helpwin_maxy - 1, $helpwin_maxx / 3, ACS_BTEE);
-    $helpwin->vline(1, $helpwin_maxx / 3, ACS_VLINE, $helpwin_maxy - 2);
 
+    # divide it with a vertical line 1/3 from the left
+    $helpwin->addch(0, $helpwin_cols / 3, ACS_TTEE);
+    $helpwin->addch($helpwin_lines - 1, $helpwin_cols / 3, ACS_BTEE);
+    $helpwin->vline(1, $helpwin_cols / 3, ACS_VLINE, $helpwin_lines - 2);
+
+    # populate the left side with a key to the planet symbols
     my $x = 2;
     my $y = 1;
     $helpwin->addstring($y++, $x, 'planets:');
     for my $planet (@{$self->{planets}}) {
-        my $planet_name = $planet->name;
-        $helpwin->addstring($y, $x+1, $self->{symbols}->{$planet_name});
-        $helpwin->addstring($y, $x+3, $planet_name);
+        $helpwin->addstring($y, $x+1, $self->_planet_symbol($planet));
+        $helpwin->addstring($y, $x+3, $planet->name);
         $y++;
     }
 
+    # populate the right side with key-binding help
     $y = 1;
-    $x = $helpwin_maxx / 3 + 2;
+    $x = $helpwin_cols / 3 + 2;
     $helpwin->addstring($y++, $x, 'key bindings:');
     $helpwin->addstring($y++, $x+1, 'h/l  go back/forward in time');
     $helpwin->addstring($y++, $x+1, 'n    go to the present time');
@@ -425,24 +446,28 @@ sub _show_help {
     $helpwin->addstring($y++, $x+1, '?    help');
     $helpwin->addstring($y++, $x+1, 'q    quit');
 
-    $helpwin->addstring($helpwin_maxy - 2,
-                        $helpwin_maxx - 27,
+    $helpwin->addstring($helpwin_lines - 2,
+                        $helpwin_cols  - 27,
                         'press any key to continue');
 
+    # wait for any key
     $helpwin->getchar;
 }
 
 sub mainloop {
     my $self = shift;
 
-    local $SIG{WINCH} = sub { $self->_resize };
-    local $SIG{ALRM} = sub { 0 };
+    # both signals will interrupt getchar, redraw immediately follows
+    local $SIG{WINCH} = sub { endwin; }; # endwin required after SIGWINCH
+    local $SIG{ALRM}  = sub { 0 };
 
     while (1) {
+        # draw the screen
         $self->draw;
 
+        # wait for a key, or redraw at the top of each minute
         alarm (60 - time % 60);
-        my ($ch, $key) = $self->{win}->getchar;
+        my ($ch, $key) = getchar;
         next if !defined $ch && !defined $key;
 
         switch ($ch || $key) {
