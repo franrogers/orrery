@@ -39,6 +39,7 @@ sub _datetime_set {
 
     foreach my $planet (@{$self->planets}) {
         $planet->datetime($dt);
+        $planet->usenow(0);
     }
 }
 
@@ -47,6 +48,7 @@ after 'clear_datetime' => sub {
 
     foreach my $planet (@{$self->planets}) {
         $planet->datetime(undef);
+        $planet->usenow(1);
     }
 };
 
@@ -60,10 +62,10 @@ has 'range' => (
     is      => 'rw',
     isa     => Tuple[Num, Num, Num, Num],
     lazy    => 1,
-    builder => '_range_builder',
+    default => \&_range_default,
 );
 
-sub _range_builder {
+sub _range_default {
     my $self = shift;
 
     return $self->telescope->lat > 0 ? [  0, 2*pi, -pi/2, pi/2]
@@ -73,6 +75,7 @@ sub _range_builder {
 has 'planets' => (
     is       => 'ro',
     isa      => 'ArrayRef[Astro::Coords::Planet]',
+    lazy     => 1,
     init_arg => undef,
     builder  => '_planets_builder',
     handles   => {
@@ -88,6 +91,7 @@ sub _planets_builder {
         my $planet = Astro::Coords::Planet->new($planet_name);
         $planet->telescope($self->telescope);
         $planet->datetime($self->datetime);
+        $planet->usenow(!$self->has_datetime);
         push @planets, $planet;
     }
     return \@planets;
