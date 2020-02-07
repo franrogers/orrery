@@ -1,9 +1,8 @@
 package Curses::Orrery;
 
 use 5.12.0;
-use Moose;
-use MooseX::Types::Moose qw(Num);
-use MooseX::Types::Structured qw(Tuple);
+use Moo;
+use Types::Standard qw(Bool Num Int ArrayRef InstanceOf Tuple);
 
 use Astro::Coords::Planet;
 use Astro::MoonPhase;
@@ -22,13 +21,13 @@ our $VERSION = '0.10';
 
 has 'telescope' => (
     is       => 'ro',
-    isa      => 'Astro::Telescope',
+    isa      => InstanceOf['Astro::Telescope'],
     required => 1,
 );
 
 has 'datetime' => (
     is        => 'rw',
-    isa       => 'DateTime',
+    isa       => InstanceOf['DateTime'],
     clearer   => 'clear_datetime',
     predicate => 'has_datetime',
     trigger   => \&_datetime_set,
@@ -54,7 +53,7 @@ after 'clear_datetime' => sub {
 
 has 'time_zone' => (
     is      => 'rw',
-    isa     => 'DateTime::TimeZone',
+    isa     => InstanceOf['DateTime::TimeZone'],
     default => sub { DateTime::TimeZone->new(name => 'local') },
 );
 
@@ -74,11 +73,11 @@ sub _range_default {
 
 has 'planets' => (
     is       => 'ro',
-    isa      => 'ArrayRef[Astro::Coords::Planet]',
+    isa      => ArrayRef[InstanceOf['Astro::Coords::Planet']],
     lazy     => 1,
     init_arg => undef,
     builder  => '_planets_builder',
-    handles   => {
+    handles  => {
         _planets_index => 'add',
     },
 );
@@ -99,7 +98,7 @@ sub _planets_builder {
 
 has 'selection_index' => (
     is        => 'rw',
-    isa       => 'Int',
+    isa       => Int,
     clearer   => 'clear_selection',
     predicate => 'has_selection',
     trigger   => \&_selection_index_set,
@@ -119,7 +118,7 @@ sub _selection_index_set {
 
 has 'unicode' => (
     is      => 'rw',
-    isa     => 'Bool',
+    isa     => Bool,
     default => 1,
 );
 

@@ -1,8 +1,8 @@
 #!perl
 
+use 5.12.0;
 use strict;
 use warnings;
-use 5.12.0;
 
 use Astro::Coords::Angle;
 use Astro::Telescope;
