@@ -15,10 +15,13 @@ WriteMakefile(
         'Astro::Telescope' => '0.71',
         'Curses'           => '1.36',
         'DateTime'         => '1.51',
-        'List::MoreUtils'  => '0.428',
         'Math::Units'      => '1.3',
         'Moo'              => '2.003006',
         'Type::Tiny'       => '1.008005',
         'Switch'           => '2.17',
+    },
+    TEST_REQUIRES    => {
+        'IO::Pty',         => '1.14',
+        'Term::VT102',     => '0.91',
     },
 );

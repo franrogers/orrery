@@ -5,7 +5,6 @@ use strict;
 use warnings;
 
 use Astro::Coords::Angle;
-use Astro::Telescope;
 use File::Basename;
 use Curses::Orrery;
 use Getopt::Std;
@@ -14,7 +13,8 @@ use Scalar::Util qw(looks_like_number);
 
 
 sub main::HELP_MESSAGE {
-    print 'usage: ', basename($0), " LATITUDE LONGITUDE [ALTITUDE]\n\n";
+    print 'usage: ', basename($0),
+          " [-a|-u] LATITUDE LONGITUDE [ALTITUDE]\n\n";
     print "  LATITUDE and LONGITUDE can be decimal or (-)HH:MM:SS\n";
     print "  ALTITUDE assumes meters if no unit is specified\n";
 }
@@ -27,30 +27,16 @@ sub main {
     my ($opt_a, $opt_u);
     getopts('au');
 
-    # LATITUDE and LONGITUDE are required
-    unless (scalar @ARGV == 2 || scalar @ARGV == 3) {
-        main::VERSION_MESSAGE;
-        main::HELP_MESSAGE;
-        exit 1;
-    }
+    my ($lat, $long, $alt) = @ARGV;
 
-    # parse LATITUDE, LONGITUDE
-    my ($lat, $long) = map {
-        Astro::Coords::Angle->new($_,
-                                  units => looks_like_number($_)
-                                         ? 'degrees' : 'sexagesimal',
-                                  range => 'PI');
-    } (shift @ARGV, shift @ARGV);
-
-    # parse ALTITUDE
-    my $alt = shift @ARGV;
+    # parse altitude
+    $alt //= 0;
     if ($alt =~ /^(\d+)\s*([a-z]+)$/i) {
         $alt = convert($1, $2, 'meters');
     }
-    $alt //= 0;
 
     # error out if args aren't sane
-    unless (ref $lat && ref $long && looks_like_number $alt) {
+    unless (defined $lat && defined $long && looks_like_number $alt) {
         main::VERSION_MESSAGE;
         main::HELP_MESSAGE;
         exit 1;
@@ -61,11 +47,9 @@ sub main {
     my $unicode = !$opt_a;
 
     # start up a Curses::Orrery
-    my $tel = Astro::Telescope->new(Name => 'orrery',
-                                    Long => $long,
-                                    Lat  => $lat,
-                                    Alt  => $alt);
-    my $orrery = Curses::Orrery->new(telescope => $tel,
+    my $orrery = Curses::Orrery->new(long    => $long,
+                                     lat     => $lat,
+                                     alt     => $alt,
                                      unicode => $unicode);
     $orrery->mainloop();
 
