@@ -1,6 +1,6 @@
 package Curses::Orrery;
 
-use warnings;
+use v5.12.0;
 use Moo;
 use Types::Standard qw(ArrayRef Bool InstanceOf Int Num Tuple);
 
@@ -63,17 +63,16 @@ optional, is the altitude in meters.
 
     use Curses::Orrery;
 
-    my $orrery = Curses::Orrery->new(lat  => -15.75,
-                                     long => -69.42,
-                                     alt  => 3812);
+    $orrery = Curses::Orrery->new(lat  => -15.75,
+                                  long => -69.42,
+                                  alt  => 3812);
     $orrery->run;
 
 You may also specify initial values for the C<datetime>, C<range>,
-C<selection_index>, and C<time_zone> attributes.
+C<selection_index>, and C<time_zone> attributes (described below).
 
-By default, this constructor initializes L<Curses> on C<*STDIN>/C<STDOUT>.
-Alternatively, you can specify a C<screen> argument (obtained from
-L<Curses>'s C<newterm>). 
+By default, this constructor initializes L<Curses> on C<stdscr>.
+Alternatively, you can specify a specific L<Curses::Screen>.
 
 =cut
 
@@ -100,6 +99,8 @@ sub DEMOLISH {
 
 An L<Astro::Coords::Angle> corresponding to the latitude of the viewer.
 
+    $lat = $orrery->lat;
+
 =cut
 
 has 'lat' => (
@@ -112,6 +113,8 @@ has 'lat' => (
 =item B<long>
 
 An L<Astro::Coords::Angle> corresponding to the longitude of the viewer.
+
+    $long = $orrery->long;
 
 =cut
 
@@ -136,7 +139,9 @@ sub _latlong_coerce {
 
 =item B<alt>
 
-The altitude of the viewer in meters. Defaults to C<0> if not provided.
+The altitude of the viewer in meters. Defaults to C<0> if not specified.
+
+    $alt = $orrery->alt;
 
 =cut
 
@@ -146,10 +151,20 @@ has 'alt' => (
     default => 0,
 );
 
-=item B<datetime>
+=item B<datetime>, B<has_datetime>, B<clear_datetime>
 
 Get/set a L<DateTime> specifying a specific date to plot. If unset, the current
 date/time will be plotted.
+
+    $dt = $orrery_datetime;
+    $orrery->datetime(DateTime->new(year      => 1985,
+                                    month     => 10,
+                                    day       => 26,
+                                    hour      => 1,
+                                    minute    => 21,
+                                    time_zone => 'America/Los_Angeles');
+    $time_set = $orrery->has_datetime;
+    $orrery->clear_datetime;
 
 =cut
 
@@ -180,19 +195,13 @@ after 'clear_datetime' => sub {
     }
 };
 
-sub advance_to_next {
-    my ($self, $time_part, $magnitude) = @_;
- 
-    my $dt = $self->has_datetime ? $self->datetime : DateTime->now;
-    $dt = $dt->truncate(to => $time_part);
-    $dt = $dt->add("${time_part}s", $magnitude);
-    $self->datetime($dt);
-}
-
 =item B<time_zone>
 
 A L<DateTime::TimeZone> corresponding to the viewer's local time zone,
 for user output. Defaults to local time.
+
+    $tz = $orrery->time_zone;
+    $orrery->time_zone(DateTime::TimeZone->new(name => 'local'));
 
 =cut
 
@@ -211,6 +220,9 @@ $max_elevation]>.
 Defaults to C<[0, 2*pi, -pi, pi]> (putting due south in the center of the plot)
 if the viewer is in the Northern Hemisphere, and C<-pi, pi, -pi. pi> if the
 viewer is in the Southern (putting due north in the center of the plot).
+
+    ($min_az, $max_az, $min_el, $max_el) = @{$orrery->range};
+    $orrery->range([0, 2*pi, 0, pi);
 
 =cut
 
@@ -233,6 +245,8 @@ sub _range_default {
 An array reference of L<Astro::Coords::Planet> objects corresponding to the
 seven non-Earth planets, Sun, and Moon. Each is populated with C<lat>, C<long>,
 and C<alt>, and updated when C<datetime> is changed.
+
+    @planets = @{$orrery->planets};
 
 =cut
 
@@ -284,9 +298,14 @@ sub _planet_symbol {
          : $abbrevs{$planet->name};
 }
 
-=item B<selection_index>
+=item B<selection_index>, B<has_selection>, B<clear_selection>
 
 An optional index specifying which planet is selected in the user interface.
+
+    $n = $orrery->selection_index;
+    $orrery->selection_index(5);
+    $selected = $orrery->has_selection;
+    $orrery->clear_selection;
 
 =cut
 
@@ -324,6 +343,14 @@ sub select_prev {
                           : @{$self->planets} - 1);
 }
 
+=item B<screen>
+
+The C<Curses::Screen> being operated on.
+
+    $scr = $orrery->scr;
+
+=cut
+
 has 'screen' => (
     is      => 'ro',
     isa     => InstanceOf['Curses::Screen'],
@@ -338,8 +365,11 @@ sub _screen_default {
 =item B<unicode>
 
 A Boolean value specifying whether to represent planets as planetary symbols if
-true, or letters if false. Defaults to true if langinfo(CODESET)> is a Unicode
-encoding.
+true, or letters if false. Defaults to true if the user's local is a Unicode
+locale.
+
+    $using_unicode = $orrery->unicode;
+    $orrery->unicode(0);
 
 =cut
 
@@ -359,9 +389,30 @@ sub _unicode_default {
 
 =over 4
 
+=item B<advance_to_next>
+
+Truncate B<datetime> to the given time component, and add to that component (or
+subtract, if negative). For example, advance to the top of the next hour.
+
+    $orrery->advance_to_next('hour', 1);
+
+=cut
+
+sub advance_to_next {
+    my ($self, $time_part, $magnitude) = @_;
+    my $dt = $self->has_datetime ? $self->datetime : DateTime->now;
+
+    $dt = $dt->truncate(to => $time_part);
+    $dt = $dt->add("${time_part}s", $magnitude);
+
+    $self->datetime($dt);
+}
+
 =item B<draw>
 
 Plots the planets on the screen.
+
+    $orrery->draw;
 
 =cut
 
@@ -578,6 +629,8 @@ sub _draw_status {
 
 Shows an informational dialog on the screen with a key to planetary symbols and
 a list of key bindings. Waits for the user to press a key before returning.
+
+    $orrery->show_help;
 
 =cut
 
