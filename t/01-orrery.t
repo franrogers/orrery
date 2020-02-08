@@ -31,10 +31,11 @@ my @known_positions = ([14, 16],
 
 
 use_ok('Curses::Orrery');
-    ok(my $orrery = Curses::Orrery->new(lat    => $known_lat,
+isa_ok(my $orrery = Curses::Orrery->new(lat    => $known_lat,
                                         long   => $known_long,
                                         alt    => $known_alt,
-                                        screen => $screen));
+                                        screen => $screen),
+       'Curses::Orrery');
 isa_ok($orrery->planets, 'ARRAY');
 cmp_ok(my @planets = @{$orrery->planets}, '==', 9);
 subtest 'planets' => sub {

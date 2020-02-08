@@ -1,8 +1,8 @@
 package Curses::Orrery;
 
-use 5.12.0;
+use warnings;
 use Moo;
-use Types::Standard qw(Bool Num Int ArrayRef InstanceOf Tuple);
+use Types::Standard qw(ArrayRef Bool InstanceOf Int Num Tuple);
 
 use Astro::Coords::Angle;
 use Astro::Coords::Planet;
@@ -11,13 +11,55 @@ use Astro::Telescope;
 use Curses;
 use DateTime;
 use DateTime::TimeZone;
-use I18N::Langinfo qw(langinfo CODESET);
-use Math::Trig qw(pi deg2rad);
+use I18N::Langinfo qw(CODESET langinfo);
+use Math::Trig qw(deg2rad pi);
 use POSIX qw(round);
 use Scalar::Util qw(looks_like_number);
 use Switch;
 
-our $VERSION = '0.10';
+=head1 NAME
+
+Curses::Orrery - Plot the positions of the sun, moon, and planets in the sky
+
+=head1 VERSION
+
+Version 0.01
+
+=cut
+
+our $VERSION = '0.01';
+
+
+=head1 SYNOPSIS
+
+Curses::Orrery is a geocentric orrery using Curses: given a latitude,
+longitude, and optional altitude, it plots the positions of the sun, moon and
+planets in the sky.  
+
+    use Curses::Orrery;
+
+    my $orrery = Curses::Orrery->new(lat  => -15.75,
+                                     long => -69.42,
+                                     alt  => 3812);
+    $orrery->run;
+
+C<lat> and C<long> can be decimal degrees, strings of format C<'(-)DD:MM:SS'>,
+or C<Astro::Coords::Angle> objects. C<alt>, which is optional, is the altitude
+in meters.
+
+=head1 AUTHOR
+
+Fran Rogers, C<< <fran at violuma.net> >>
+
+=head1 LICENSE AND COPYRIGHT
+
+This software is Copyright (c) 2020 by Fran Rogers.
+
+This is free software, licensed under:
+
+  The Artistic License 2.0 (GPL Compatible)
+
+=cut
 
 
 has 'lat' => (
@@ -487,7 +529,7 @@ sub show_help {
     $help->getchar;
 }
 
-sub mainloop {
+sub run {
     my $self = shift;
 
     # both signals will interrupt getchar, redraw immediately follows
@@ -517,4 +559,4 @@ sub mainloop {
     }
 }
 
-1;
+1; # End of Curses::Orrery

@@ -1,6 +1,7 @@
 # orrery
 
-Displays the positions of the sun, moon, and planets in the sky at a given location, on your terminal.
+Displays the positions of the sun, moon, and planets in the sky at a given
+location, on your terminal.
 
 ## Installation
 
@@ -8,8 +9,7 @@ Displays the positions of the sun, moon, and planets in the sky at a given locat
 cpan MakeMaker
 perl Makefile.PL
 perl -0777 -MCPAN -MCPAN::Meta::YAML \
-     -e '@reqs = keys %{Load(<>)->{requires}};' \
-     -e 'map {CPAN::Shell->install($_)} @reqs;' \
+     -e 'map {CPAN::Shell->install($_)} keys %{Load(<>)->{requires}}' \
      MYMETA.yml
 make
 make install
@@ -30,9 +30,13 @@ orrery 40:02:15 -76:06:19 436ft
 
 ### Display
 
-The horizontal axis is the planets' azimuth (cardinal direction of the viewer), from 0° to 360° (i.e., facing due south) in the northern hemisphere and from -180° to 180° (i.e., facing due north) in the southern hemisphere. The vertical axis is the elevation (height in the sky), with the horizon at the center.
+The horizontal axis is the planets' azimuth (cardinal direction of the viewer),
+from 0° to 360° (i.e., facing due south) in the northern hemisphere and from
+-180° to 180° (i.e., facing due north) in the southern hemisphere. The vertical
+axis is the elevation (height in the sky), with the horizon at the center.
 
-Planets are displayed as planetary symbols if your environment is Unicode-aware, or else as single-letter abbreviations.
+Planets are displayed as planetary symbols if your environment is
+Unicode-aware, or else as single-letter abbreviations.
 
 ### Key bindings
 
@@ -55,4 +59,4 @@ Planets are displayed as planetary symbols if your environment is Unicode-aware,
 * `♆`/`n`: Neptune
 
 ## License
-[MIT](https://choosealicense.com/licenses/mit/)
+[Artistic License 2.0](https://dev.perl.org/licenses/artistic.html)

@@ -4,7 +4,6 @@ use 5.12.0;
 use strict;
 use warnings;
 
-use Astro::Coords::Angle;
 use File::Basename;
 use Curses::Orrery;
 use Getopt::Std;
@@ -12,15 +11,27 @@ use Math::Units qw(convert);
 use Scalar::Util qw(looks_like_number);
 
 
+$Getopt::Std::STANDARD_HELP_VERSION = 1;
+
 sub main::HELP_MESSAGE {
-    print 'usage: ', basename($0),
-          " [-a|-u] LATITUDE LONGITUDE [ALTITUDE]\n\n";
-    print "  LATITUDE and LONGITUDE can be decimal or (-)HH:MM:SS\n";
-    print "  ALTITUDE assumes meters if no unit is specified\n";
+    my $script_name = basename($0);
+    print <<"END";
+
+Usage:
+     $script_name [ -a | -u] LATITUDE LONGITUDE [ALTITUDE]
+
+Options:
+        -a               Display planets as letters
+        -u               Display planets as planetary symbols
+                         (default if your locale is a Unicode one)
+
+LATITUDE and LONGITUDE can be decimal or "(-)HH:MM:SS".
+ALTITUDE assumes meters if no unit is specified.
+END
 }
 
 sub main::VERSION_MESSAGE {
-    print basename($0), ' ', $Orrery::VERSION, "\n";
+    print basename($0), ' ', $Curses::Orrery::VERSION, "\n";
 }
 
 sub main {
@@ -51,7 +62,7 @@ sub main {
                                      lat     => $lat,
                                      alt     => $alt,
                                      unicode => $unicode);
-    $orrery->mainloop();
+    $orrery->run;
 
     exit 0;
 }
