@@ -32,9 +32,34 @@ our $VERSION = '0.01';
 
 =head1 SYNOPSIS
 
-Curses::Orrery is a geocentric orrery using Curses: given a latitude,
-longitude, and optional altitude, it plots the positions of the sun, moon and
-planets in the sky.  
+    use Curses::Orrery;
+
+    $orrery = Curses::Orrery->new(lat  => -15.75,
+                                  long => -69.42,
+                                  alt  => 3812);
+    $orrery->run;
+
+=head1 DESCRIPTION
+
+C<Curses::Orrery> is a geocentric orrery using C<Curses>: given a latitude,
+longitude, and optional altitude, it plots on the terminal the positions of the
+sun, moon and planets in the sky.
+
+When run, the user can select each individual body for information on its
+position and rise/transit/set times, and can also step the movement
+hour-by-hour.
+
+=head1 METHODS
+
+=head2 Constructor
+
+=over 4
+
+=item B<new>
+
+C<lat> and C<long> are required: they can be decimal degrees, strings of format
+C<'(-)DD:MM:SS'>, or L<Astro::Coords::Angle> objects. C<alt>, which is
+optional, is the altitude in meters.
 
     use Curses::Orrery;
 
@@ -43,24 +68,39 @@ planets in the sky.
                                      alt  => 3812);
     $orrery->run;
 
-C<lat> and C<long> can be decimal degrees, strings of format C<'(-)DD:MM:SS'>,
-or C<Astro::Coords::Angle> objects. C<alt>, which is optional, is the altitude
-in meters.
+You may also specify initial values for the C<datetime>, C<range>,
+C<selection_index>, and C<time_zone> attributes.
 
-=head1 AUTHOR
-
-Fran Rogers, C<< <fran at violuma.net> >>
-
-=head1 LICENSE AND COPYRIGHT
-
-This software is Copyright (c) 2020 by Fran Rogers.
-
-This is free software, licensed under:
-
-  The Artistic License 2.0 (GPL Compatible)
+By default, this constructor initializes L<Curses> on C<*STDIN>/C<STDOUT>.
+Alternatively, you can specify a C<screen> argument (obtained from
+L<Curses>'s C<newterm>). 
 
 =cut
 
+sub BUILD {
+    my $self = shift;
+
+    # configure curses
+    $stdscr->keypad(1);
+    curs_set 0;
+    noecho;
+}
+
+sub DEMOLISH {
+    endwin;
+}
+
+=back
+
+=head2 Accessor Methods
+
+=over 4
+
+=item B<lat>
+
+An L<Astro::Coords::Angle> corresponding to the latitude of the viewer.
+
+=cut
 
 has 'lat' => (
     is       => 'ro',
@@ -68,6 +108,12 @@ has 'lat' => (
     required => 1,
     coerce   => \&_latlong_coerce,
 );
+
+=item B<long>
+
+An L<Astro::Coords::Angle> corresponding to the longitude of the viewer.
+
+=cut
 
 has 'long' => (
     is       => 'ro',
@@ -88,11 +134,24 @@ sub _latlong_coerce {
     return $angle;
 }
 
+=item B<alt>
+
+The altitude of the viewer in meters. Defaults to C<0> if not provided.
+
+=cut
+
 has 'alt' => (
     is      => 'ro',
     isa     => Num,
     default => 0,
 );
+
+=item B<datetime>
+
+Get/set a L<DateTime> specifying a specific date to plot. If unset, the current
+date/time will be plotted.
+
+=cut
 
 has 'datetime' => (
     is        => 'rw',
@@ -130,11 +189,30 @@ sub advance_to_next {
     $self->datetime($dt);
 }
 
+=item B<time_zone>
+
+A L<DateTime::TimeZone> corresponding to the viewer's local time zone,
+for user output. Defaults to local time.
+
+=cut
+
 has 'time_zone' => (
     is      => 'rw',
     isa     => InstanceOf['DateTime::TimeZone'],
     default => sub { DateTime::TimeZone->new(name => 'local') },
 );
+
+=item B<range>
+
+A four-element array reference specifying the range of positions to plot in
+radians, of format C<[$min_azimuth, $max_azimuth, $min_elevation,
+$max_elevation]>.
+
+Defaults to C<[0, 2*pi, -pi, pi]> (putting due south in the center of the plot)
+if the viewer is in the Northern Hemisphere, and C<-pi, pi, -pi. pi> if the
+viewer is in the Southern (putting due north in the center of the plot).
+
+=cut
 
 has 'range' => (
     is      => 'rw',
@@ -149,6 +227,14 @@ sub _range_default {
     return $self->lat > 0 ? [  0, 2*pi, -pi/2, pi/2]
                           : [-pi,   pi, -pi/2, pi/2];
 }
+
+=item B<planets>
+
+An array reference of L<Astro::Coords::Planet> objects corresponding to the
+seven non-Earth planets, Sun, and Moon. Each is populated with C<lat>, C<long>,
+and C<alt>, and updated when C<datetime> is changed.
+
+=cut
 
 has 'planets' => (
     is       => 'ro',
@@ -198,6 +284,12 @@ sub _planet_symbol {
          : $abbrevs{$planet->name};
 }
 
+=item B<selection_index>
+
+An optional index specifying which planet is selected in the user interface.
+
+=cut
+
 has 'selection_index' => (
     is        => 'rw',
     isa       => Int,
@@ -243,6 +335,14 @@ sub _screen_default {
     return newterm($ENV{'TERM'}, *STDOUT, *STDIN);
 }
 
+=item B<unicode>
+
+A Boolean value specifying whether to represent planets as planetary symbols if
+true, or letters if false. Defaults to true if langinfo(CODESET)> is a Unicode
+encoding.
+
+=cut
+
 has 'unicode' => (
     is      => 'rw',
     isa     => Bool,
@@ -253,18 +353,17 @@ sub _unicode_default {
     return langinfo(CODESET) =~ /^utf|^ucs/i;
 }
 
-sub BUILD {
-    my $self = shift;
+=back
 
-    # configure curses
-    $stdscr->keypad(1);
-    curs_set 0;
-    noecho;
-}
+=head2 General Methods
 
-sub DEMOLISH {
-    endwin;
-}
+=over 4
+
+=item B<draw>
+
+Plots the planets on the screen.
+
+=cut
 
 sub draw {
     my $self = shift;
@@ -474,7 +573,14 @@ sub _draw_status {
         addstring $LINES - 1, $COLS - 22, "\x{2609}";
     }
 }
-    
+
+=item B<show_help>
+
+Shows an informational dialog on the screen with a key to planetary symbols and
+a list of key bindings. Waits for the user to press a key before returning.
+
+=cut
+
 sub show_help {
     my $self = shift;
 
@@ -529,6 +635,23 @@ sub show_help {
     $help->getchar;
 }
 
+=item B<run>
+
+Draws the screen and waits for single-key commands from the user. Redraws the
+screen after each user command, and at the top of each minute. Returns after
+the user presses C<q>.
+
+The available key bindings are:
+
+    h/l  go back/forward in time
+    n    go back to the present time
+    j/k  highlight next/previous planet
+    c    clear highlight
+    ?    help
+    q    quit
+
+=cut
+
 sub run {
     my $self = shift;
 
@@ -558,5 +681,25 @@ sub run {
         }
     }
 }
+
+=back
+
+=head1 AUTHOR
+
+Fran Rogers, C<< <fran at violuma.net> >>
+
+=head1 SEE ALSO
+
+L<Astro::Coords>; L<DateTime>
+
+=head1 LICENSE AND COPYRIGHT
+
+This software is Copyright (c) 2020 by Fran Rogers.
+
+This is free software, licensed under:
+
+  The Artistic License 2.0 (GPL Compatible)
+
+=cut
 
 1; # End of Curses::Orrery
