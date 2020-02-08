@@ -365,7 +365,7 @@ sub _screen_default {
 =item B<unicode>
 
 A Boolean value specifying whether to represent planets as planetary symbols if
-true, or letters if false. Defaults to true if the user's local is a Unicode
+true, or letters if false. Defaults to true if the user's locale is a Unicode
 locale.
 
     $using_unicode = $orrery->unicode;
